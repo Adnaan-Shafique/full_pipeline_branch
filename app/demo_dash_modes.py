@@ -741,7 +741,30 @@ def quality_column(record):
     return html.Div(children, className="rc-col")
 
 
-def detection_column(record):
+def overlay_path(detection, overlay):
+    """The pre-rendered image for one overlay choice, falling back sensibly.
+
+    Falls back to the plain photograph rather than to a placeholder: a missing
+    variant means that rendering was not produced, and showing the photograph
+    with no boxes is a truthful degradation where an empty box would read as
+    "the model claimed nothing".
+    """
+    paths = getattr(detection, "overlay_paths", None) or {}
+    if not paths:
+        # Records written before overlays existed carry only annotated_path.
+        return detection.annotated_path
+    return paths.get(overlay) or paths.get("off") or detection.annotated_path
+
+
+def overlay_available(detection, overlay) -> bool:
+    """Whether the requested rendering actually exists, as opposed to having
+    been fallen back to. Old records carry no overlay_paths at all and are not
+    a failure - they simply predate the feature."""
+    paths = getattr(detection, "overlay_paths", None) or {}
+    return not paths or overlay in paths
+
+
+def detection_column(record, overlay="box_label"):
     """The detection panel, with mode 3's presence case.
 
     Modes 1 and 2 fill this from the trained detector and it shows boxes. Mode 3
@@ -762,12 +785,24 @@ def detection_column(record):
             html.H4("2 · Subject visible?" if not claimed
                     else "2 · Subject visible, and where?"),
         ]
-        if claimed:
+        if claimed and overlay != "off":
             # The dashed boxes, drawn on the photograph. Nothing else is on this
             # image: no u2netp crop, no detector boxes - only what mode 3 itself
-            # produced.
+            # produced. `overlay` picks which pre-rendered variant to show.
             children.append(image_or_placeholder(
-                d.annotated_path, "The claimed region could not be rendered"))
+                overlay_path(d, overlay),
+                "The claimed region could not be rendered"))
+            if not overlay_available(d, overlay):
+                # Falling back to the plain photograph here would show an image
+                # with no boxes on it while the card lists a claim - which reads
+                # as "the model claimed nothing", the opposite of what happened.
+                children.append(html.Div(
+                    "The overlay could not be rendered for this photograph, so "
+                    "the plain copy is shown. The claim below is still real.",
+                    className="banner banner-warn"))
+        elif claimed:
+            children.append(image_or_placeholder(
+                overlay_path(d, "off"), "The photograph could not be rendered"))
         children += [
             html.Div(html.Span(d.presence.upper(), className=f"chip {chip}")),
             html.Div(d.presence_reasoning or "", className="rc-reason"),
@@ -777,7 +812,11 @@ def detection_column(record):
         children.extend(claimed_box_lines(claimed))
         if getattr(d, "grounding_note", ""):
             children.append(html.Div(d.grounding_note, className="banner banner-warn"))
-        if claimed:
+        if claimed and overlay == "off":
+            children.append(html.Div(
+                "The overlay is hidden. The claim is listed above and the "
+                "boxes are still in the results.", className="rc-muted"))
+        elif claimed:
             children.append(html.Div(
                 "Dashed boxes are the MODEL's claim about where the subject is, "
                 "not a detection. Nothing measured them.", className="rc-muted"))

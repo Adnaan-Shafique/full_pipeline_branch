@@ -54,7 +54,9 @@ from dash import Dash, Input, Output, State, dcc, html, no_update  # noqa: E402
 from pipeline.config import (SEND_FULL, SEND_FULL_CROP,  # noqa: E402
                              TRANSPORT_DIRECT, TRANSPORT_PROXY, VLM_MODE_LIVE,
                              VLM_MODE_MOCK, default_config)
-from pipeline.modes import (MODE_ORDER, MODE_VLM_ONLY, MODES,  # noqa: E402
+from pipeline.modes import (DEFAULT_OVERLAY, MODE_ORDER,  # noqa: E402
+                            MODE_VLM_ONLY, MODES, OVERLAY_BOX,
+                            OVERLAY_BOX_LABEL, OVERLAY_CHOICES, OVERLAY_OFF,
                             agreement, compare_rows, run_all_modes)
 from pipeline.orchestrator import (IMAGE_EXTENSIONS, new_run_id,  # noqa: E402
                                    sort_for_display)
@@ -414,7 +416,7 @@ def side_by_side(stem, per_mode, question):
     ], className="rc")
 
 
-def detail_card(record, question, mode_id):
+def detail_card(record, question, mode_id, overlay=DEFAULT_OVERLAY):
     """One mode's four stages in full: quality, detection, OCR, answer."""
     children = [html.Div([html.Span(record.filename, className="rc-name"),
                           html.Span(MODES[mode_id]["label"], className="rc-sub")],
@@ -426,7 +428,7 @@ def detail_card(record, question, mode_id):
     gate = record.extra.get("gate")
     if gate:
         children.append(html.Div(f"Gate: {gate}", className="banner banner-info"))
-    panels = [quality_column(record), detection_column(record),
+    panels = [quality_column(record), detection_column(record, overlay),
               ocr_column(record, question), vlm_column(record, question)]
     evidence = evidence_column(record, question, mode_id)
     if evidence is not None:
@@ -533,6 +535,26 @@ def layout():
                         options=[{"label": MODES[m]["label"], "value": m}
                                  for m in MODE_ORDER],
                         value=MODE_ORDER[0], style={"marginTop": "12px"}),
+                    # A VIEW control, not a run control. Every variant was
+                    # rendered during the run, so switching costs a re-render
+                    # and never a model call - which is why it sits up here
+                    # with the tabs rather than in the sidebar with the
+                    # settings that do force a re-run.
+                    html.Div([
+                        html.Span("Mode 3 overlay", className="field"),
+                        dcc.RadioItems(
+                            id="overlay", className="opt",
+                            options=[
+                                {"label": " box + label", "value": OVERLAY_BOX_LABEL},
+                                {"label": " box only", "value": OVERLAY_BOX},
+                                {"label": " off", "value": OVERLAY_OFF}],
+                            value=DEFAULT_OVERLAY,
+                            style={"display": "inline-block"}),
+                        html.Div("Redraws from results already computed — it "
+                                 "never re-runs the pipeline. Use “box only” "
+                                 "when the caption covers the object.",
+                                 className="field-help"),
+                    ], style={"marginTop": "10px"}),
                     dcc.Loading(html.Div(id="panel", style={"marginTop": "20px"}),
                                 type="dot", color="#EE3B2F"),
                 ]),
@@ -719,14 +741,16 @@ def on_check(_clicks, gpu_url, transport, api_key, vlm_model, checkpoint):
 
 @app.callback(Output("panel", "children"),
               Input("run", "n_clicks"), Input("tabs", "value"), Input("mode", "value"),
+              Input("overlay", "value"),
               State("domain", "value"), State("question", "value"),
               State("staged", "data"), State("gpu-url", "value"),
               State("transport", "value"), State("api-key", "value"),
               State("vlm-model", "value"), State("vlm-mode", "value"),
               State("send-mode", "value"), State("threshold", "value"),
               State("flags", "value"), State("checkpoint", "value"))
-def on_run(n_clicks, tab, mode, domain_id, question_id, staged, gpu_url, transport,
-           api_key, vlm_model, vlm_mode, send_mode, threshold, flags, checkpoint):
+def on_run(n_clicks, tab, mode, overlay, domain_id, question_id, staged, gpu_url,
+           transport, api_key, vlm_model, vlm_mode, send_mode, threshold, flags,
+           checkpoint):
     """One callback for Run and for both selectors.
 
     Switching tab or mode must NOT re-run the pipeline - that is the whole
@@ -740,13 +764,15 @@ def on_run(n_clicks, tab, mode, domain_id, question_id, staged, gpu_url, transpo
     triggered = (callback_context.triggered[0]["prop_id"].split(".")[0]
                  if callback_context.triggered else "")
     if triggered != "run":
-        return _panel(tab, mode)
+        return _panel(tab, mode, overlay)
     return execute_run(tab, mode, question_id, staged, gpu_url, transport, api_key,
-                       vlm_model, vlm_mode, send_mode, threshold, flags, checkpoint)
+                       vlm_model, vlm_mode, send_mode, threshold, flags, checkpoint,
+                       overlay=overlay)
 
 
 def execute_run(tab, mode, question_id, staged, gpu_url, transport, api_key,
-                vlm_model, vlm_mode, send_mode, threshold, flags, checkpoint):
+                vlm_model, vlm_mode, send_mode, threshold, flags, checkpoint,
+                overlay=DEFAULT_OVERLAY):
     """Run all three modes over the staged photographs and render `tab`."""
     if not question_id:
         return html.Div("Pick a domain and a question first.", className="empty")
@@ -769,10 +795,10 @@ def execute_run(tab, mode, question_id, staged, gpu_url, transport, api_key,
 
     _STATE.update({"results": results, "question_id": question_id, "cfg": cfg,
                    "paths": paths})
-    return _panel(tab, mode)
+    return _panel(tab, mode, overlay)
 
 
-def _panel(tab, mode):
+def _panel(tab, mode, overlay=DEFAULT_OVERLAY):
     results = _STATE.get("results") or {}
     question_id = _STATE.get("question_id")
     if not results or not question_id:
@@ -789,7 +815,7 @@ def _panel(tab, mode):
         return html.Div(
             [html.Div([html.B(MODES[mode]["label"]), " — ", MODES[mode]["blurb"]],
                       className="banner banner-info")]
-            + [detail_card(r, question, mode) for r in records])
+            + [detail_card(r, question, mode, overlay) for r in records])
 
     # "Three modes": the headline view.
     stats = agreement(results)

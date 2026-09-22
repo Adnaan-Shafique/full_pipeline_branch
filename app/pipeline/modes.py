@@ -233,28 +233,60 @@ def _record(path, stem, question_id, quality, detection, vlm, stopped, started,
     return record
 
 
-def _write_plain(image_bgr, dest: Path, claimed=None) -> Optional[str]:
-    """The photograph as mode 3 saw it.
+# The three ways mode 3's photograph can be shown. The UI switches between them
+# with no re-run: all three are written during the run, because re-drawing on a
+# callback would mean either holding every decoded photograph in memory or
+# re-reading it from disk, and re-reading is exactly what this repo's
+# "arrays, never paths" rule exists to prevent.
+OVERLAY_BOX_LABEL = "box_label"
+OVERLAY_BOX = "box"
+OVERLAY_OFF = "off"
+OVERLAY_CHOICES = (OVERLAY_BOX_LABEL, OVERLAY_BOX, OVERLAY_OFF)
+DEFAULT_OVERLAY = OVERLAY_BOX_LABEL
 
-    Unannotated when the model claimed no geometry - u2netp never ran here and
-    YOLOX's boxes belong to the other two modes, so drawing either would credit
-    a component that did not run. When the model DID point somewhere, its own
-    dashed boxes are drawn and nothing else: what is on this image is only ever
-    what mode 3 itself produced.
+
+def _write_variants(image_bgr, dest: Path, claimed=None) -> dict:
+    """Write mode 3's photograph in each overlay variant. Returns
+    {variant: path}, with missing entries where a write failed.
+
+    The plain copy is always written: u2netp never ran here and YOLOX's boxes
+    belong to the other two modes, so an unannotated photograph is the honest
+    baseline and the only thing that may ever be added to it is mode 3's own
+    dashed claim. The other two are only written when there is something to
+    draw, so a photograph with no claim has exactly one file, as before.
     """
     import cv2
 
+    out: dict = {}
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        out = image_bgr
-        if claimed:
-            from .detect_draw import draw_claimed_boxes
-            out = draw_claimed_boxes(image_bgr, claimed)
-        if not cv2.imwrite(str(dest), out):
-            return None
+        if cv2.imwrite(str(dest), image_bgr):
+            out[OVERLAY_OFF] = str(dest)
     except Exception:
-        return None
-    return str(dest)
+        return out
+    if not claimed:
+        return out
+
+    from .detect_draw import draw_claimed_boxes
+
+    for variant, labels in ((OVERLAY_BOX_LABEL, True), (OVERLAY_BOX, False)):
+        path = dest.with_name(f"{dest.stem}__{variant}{dest.suffix}")
+        try:
+            drawn = draw_claimed_boxes(image_bgr, claimed, labels=labels)
+            if cv2.imwrite(str(path), drawn):
+                out[variant] = str(path)
+        except Exception:
+            # A failed variant costs that one rendering, never the record. The
+            # UI falls back to whichever variants exist.
+            continue
+    return out
+
+
+def _write_plain(image_bgr, dest: Path, claimed=None) -> Optional[str]:
+    """Back-compat single-path wrapper: the labelled variant when there is one,
+    otherwise the plain copy. Kept because tests and the re-run path call it."""
+    variants = _write_variants(image_bgr, dest, claimed)
+    return (variants.get(OVERLAY_BOX_LABEL) or variants.get(OVERLAY_OFF))
 
 
 def _vlm_only_record(path, stem, question_id, combined, classical_quality,
@@ -284,9 +316,14 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
         vlm_grounding.compare_to_detections(answer_boxes, score_against)
     claimed = list(presence_boxes.boxes) + list(answer_boxes.boxes)
 
-    annotated = None
+    variants: dict = {}
     if image_bgr is not None and image_path is not None:
-        annotated = _write_plain(image_bgr, Path(image_path), claimed=claimed)
+        variants = _write_variants(image_bgr, Path(image_path), claimed=claimed)
+    # What the quality panel shows: the photograph as judged, never with boxes.
+    # The claim belongs to the detection panel, which is what it is a claim
+    # about.
+    annotated = variants.get(OVERLAY_OFF)
+    overlay = variants.get(OVERLAY_BOX_LABEL)
 
     quality = QualityStageResult(
         passed=(combined["quality"] == "good"),
@@ -304,14 +341,18 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
     # claimed region fed back in as evidence would have the model citing itself.
     # The claim lives in claimed_boxes, which only the renderers read.
     detection = DetectionStageResult(
-        detections=[], annotated_path=annotated if claimed else None,
+        detections=[], annotated_path=overlay,
         model_name=(f"{combined['model']} "
                     + ("(presence + claimed region, not a detector)" if claimed
                        else "(presence only, no boxes)")),
         is_stub=False, note="", presence=combined["subject_present"],
         presence_reasoning=combined.get("subject_reasoning", ""),
         claimed_boxes=[b for b in claimed if b.leg == "presence"],
-        grounding_note=presence_boxes.note)
+        grounding_note=presence_boxes.note,
+        # Every rendering of this photograph, so the UI's overlay control is a
+        # choice between files already on disk rather than a reason to re-run
+        # three model calls.
+        overlay_paths=variants)
 
     # Stated explicitly rather than left as None. Mode 3 not running OCR is a
     # deliberate property of the mode - the model read whatever text is in the

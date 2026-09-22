@@ -241,6 +241,143 @@ check("colliding captions are pushed clear rather than overwritten",
 check("and the search is bounded, not a while-loop off the image",
       "for _ in range(6)" in draw_src)
 
+print("\nthe overlay toggle: three renderings, written once, switched freely")
+import tempfile  # noqa: E402
+
+from pipeline import modes as M  # noqa: E402
+
+check("three choices, and a default among them",
+      set(M.OVERLAY_CHOICES) == {M.OVERLAY_BOX_LABEL, M.OVERLAY_BOX, M.OVERLAY_OFF}
+      and M.DEFAULT_OVERLAY in M.OVERLAY_CHOICES)
+
+_written = []
+_cv2 = sys.modules["cv2"]
+_cv2.imwrite = lambda path, img: (_written.append(Path(path).name),
+                                  Path(path).write_bytes(b"jpg"), True)[2]
+# draw_claimed_boxes needs a drawable cv2. Stubbing only imwrite would make both
+# overlay renders raise into _write_variants' except and silently produce ONLY
+# the plain copy - which is precisely the bug this section is here to catch, so
+# the stub has to be good enough to get past the drawing.
+_cv2.line = lambda *a, **k: None
+_cv2.rectangle = lambda *a, **k: None
+_cv2.putText = lambda *a, **k: None
+_cv2.getTextSize = lambda text, font, scale, thick: ((len(text) * 8, 12), 4)
+_cv2.FONT_HERSHEY_SIMPLEX = 0
+_cv2.LINE_AA = 16
+
+
+class _Img:
+    """Just enough array for the drawing code: a shape and a copy()."""
+
+    shape = (900, 1400, 3)
+
+    def copy(self):
+        return self
+claim = G.GroundingBox(box=[10, 10, 50, 50], label="a thing", leg="presence")
+tmpdir = Path(tempfile.mkdtemp())
+
+_written.clear()
+variants = M._write_variants(_Img(), tmpdir / "a.jpg", claimed=[claim])
+check("with a claim, all three renderings are written",
+      set(variants) == {M.OVERLAY_BOX_LABEL, M.OVERLAY_BOX, M.OVERLAY_OFF},
+      str(sorted(variants)))
+check("the plain one keeps the plain name", Path(variants[M.OVERLAY_OFF]).name == "a.jpg")
+check("and the overlays are suffixed, not overwriting it",
+      Path(variants[M.OVERLAY_BOX]).name == "a__box.jpg", str(_written))
+# Writing all three during the run is what makes the toggle free. Re-drawing in
+# a callback would mean holding every decoded photograph in memory or re-reading
+# it from disk, and re-reading is what "arrays, never paths" exists to prevent.
+check("three files, so switching costs a re-render and not a model call",
+      len(_written) == 3, str(_written))
+
+_written.clear()
+variants = M._write_variants(_Img(), tmpdir / "b.jpg", claimed=[])
+check("with no claim, only the plain copy is written",
+      set(variants) == {M.OVERLAY_OFF} and len(_written) == 1, str(_written))
+
+_cv2.imwrite = lambda path, img: False
+check("a failed write yields no paths rather than a path to nothing",
+      M._write_variants(_Img(), tmpdir / "c.jpg", claimed=[claim]) == {})
+_cv2.imwrite = lambda path, img: (Path(path).write_bytes(b"jpg"), True)[1]
+
+print("\nthe UI resolves an overlay choice to a file that exists")
+import importlib.util  # noqa: E402
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# The dash stub, so the renderer can be imported without dash installed.
+_stub = {"__name__": "test_dash_ui",
+         "__file__": str(ROOT / "tests" / "test_dash_ui.py")}
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+_real_exit, sys.exit = sys.exit, lambda code=0: None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(compile((ROOT / "tests" / "test_dash_ui.py").read_text(),
+                     "test_dash_ui.py", "exec"), _stub)
+finally:
+    sys.exit = _real_exit
+for _n in ("Textarea", "Slider", "Markdown", "Graph"):
+    setattr(sys.modules["dash.dcc"], _n, _stub["Node"])
+_load("demo_dash", ROOT / "app" / "demo_dash.py")
+UI = _load("demo_dash_modes", ROOT / "app" / "demo_dash_modes.py")
+
+
+class FakeDet:
+    annotated_path = "/fallback.jpg"
+    overlay_paths = {"box_label": "/a__box_label.jpg", "box": "/a__box.jpg",
+                     "off": "/a.jpg"}
+
+
+for choice, want in [("box_label", "/a__box_label.jpg"), ("box", "/a__box.jpg"),
+                     ("off", "/a.jpg")]:
+    check(f"{choice} resolves to its own rendering",
+          UI.overlay_path(FakeDet(), choice) == want, UI.overlay_path(FakeDet(), choice))
+# Falling back to the PLAIN photograph, not to a placeholder: a missing variant
+# means that rendering was not produced, and an empty frame would read as "the
+# model claimed nothing", which is a different finding.
+check("an unknown choice falls back to the plain photograph",
+      UI.overlay_path(FakeDet(), "nonsense") == "/a.jpg")
+
+
+class OldDet:
+    annotated_path = "/legacy.jpg"
+    overlay_paths = {}
+
+
+check("a record written before overlays existed still renders",
+      UI.overlay_path(OldDet(), "box") == "/legacy.jpg")
+check("and is not reported as a failed render - it predates the feature",
+      UI.overlay_available(OldDet(), "box") is True)
+
+
+class BrokenDet:
+    annotated_path = "/a.jpg"
+    overlay_paths = {"off": "/a.jpg"}     # the overlay renders failed
+
+
+check("a variant that failed to render IS reported",
+      UI.overlay_available(BrokenDet(), "box") is False)
+check("and it still falls back to the plain photograph",
+      UI.overlay_path(BrokenDet(), "box") == "/a.jpg")
+
+print("\nthe toggle is a VIEW control and must never re-run the pipeline")
+app_src = (ROOT / "app" / "demo_dash_pipeline.py").read_text()
+check("overlay is an Input, so changing it re-renders",
+      'Input("overlay", "value")' in app_src)
+check("but only the Run button reaches execute_run",
+      'triggered != "run"' in app_src)
+check("and the non-run path renders with the chosen overlay",
+      "_panel(tab, mode, overlay)" in app_src)
+
 print("\na mock claims no geometry")
 from pipeline.stage3_vlm import mock_vlm_only  # noqa: E402
 

@@ -165,6 +165,11 @@ class DetectionStageResult:
     # and start treating them as detector output.
     claimed_boxes: list = field(default_factory=list)
     grounding_note: str = ""
+    # {overlay variant: path} for mode 3 - "box_label", "box", "off". Written
+    # once during the run so the UI can switch overlays without re-running
+    # anything. Absent keys simply mean that rendering was not produced (no
+    # claim to draw, or a failed write); the UI falls back rather than assuming.
+    overlay_paths: dict = field(default_factory=dict)
 
     def top(self) -> Optional[Detection]:
         return max(self.detections, key=lambda d: d.confidence, default=None)

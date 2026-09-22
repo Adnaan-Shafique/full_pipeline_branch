@@ -64,13 +64,21 @@ def _dashed_line(out, p1, p2, thickness, dash=CLAIMED_DASH_PX):
         cv2.line(out, start, end, colour, thickness, cv2.LINE_AA)
 
 
-def draw_claimed_boxes(image_bgr, claimed: Iterable, thickness: int | None = None):
+def draw_claimed_boxes(image_bgr, claimed: Iterable, thickness: int | None = None,
+                       labels: bool = True):
     """Boxes the MODEL claimed, drawn so they cannot be mistaken for detections.
 
     Each carries a caption that says who is claiming it and, where the trained
     detector ran on the same photograph, how well the two agree. That second
     part is what makes drawing these defensible: the box arrives with its own
     error bar rather than as an unqualified assertion.
+
+    `labels=False` draws the dashed rectangles alone. The captions are long -
+    "model says: a temperature display or device reading (IoU 0.62 vs
+    detector)" - and on a tight box around a small object they cover the thing
+    being pointed at, which defeats the point of pointing at it. The caption
+    text is still on the card either way, so nothing is lost by hiding it here;
+    the UI offers box+label, box-only and off.
     """
     import cv2
 
@@ -92,6 +100,9 @@ def draw_claimed_boxes(image_bgr, claimed: Iterable, thickness: int | None = Non
         for p1, p2 in (((x1, y1), (x2, y1)), ((x2, y1), (x2, y2)),
                        ((x2, y2), (x1, y2)), ((x1, y2), (x1, y1))):
             _dashed_line(out, p1, p2, t)
+
+        if not labels:
+            continue
 
         caption = f"model says: {claim.label or 'here'}"
         if claim.iou is not None:
