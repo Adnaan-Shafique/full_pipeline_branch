@@ -212,6 +212,25 @@ def array_to_data_uri(image_bgr, max_side: int = MAX_UPLOAD_SIDE_PX) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+def encoded_size(image_bgr, max_side: int = MAX_UPLOAD_SIDE_PX) -> tuple:
+    """(width, height) of the image as array_to_data_uri() will actually send it.
+
+    The model never sees the original frame - it sees this. Any ABSOLUTE pixel
+    coordinate it replies with is therefore in this frame, and placing it in the
+    original needs this number. Without it a 4000px photo's boxes land at
+    roughly half scale with nothing raising, which is the same shape of bug as
+    drawing a box computed on an EXIF-corrected array onto a re-read file.
+
+    Mirrors array_to_data_uri()'s arithmetic exactly; if that resize changes,
+    this must change with it.
+    """
+    h, w = image_bgr.shape[:2]
+    if max(h, w) > max_side:
+        scale = max_side / max(h, w)
+        return max(1, int(w * scale)), max(1, int(h * scale))
+    return w, h
+
+
 def crop_for_detection(image_bgr, box, min_frame_frac: float = 0.20):
     """Crop around an absolute-pixel [x1,y1,x2,y2] box, padded.
 
@@ -595,7 +614,7 @@ class VLMClient:
         )
 
     def ask_leg(self, image_bgr, question, leg: str, system: str,
-                image_uri: Optional[str] = None) -> dict:
+                image_uri: Optional[str] = None, grounding: bool = False) -> dict:
         """One leg of mode 3: one system prompt, one question, one answer.
 
         `system` comes from the prompt store, so an edit in the UI reaches the
@@ -604,7 +623,7 @@ class VLMClient:
         three times per photograph is pure waste.
         """
         model = self.cfg.vlm_model
-        prompt = render_leg_user(question, leg)
+        prompt = render_leg_user(question, leg, grounding=grounding)
         sampling = sampling_for(question, self.cfg)
 
         try:
@@ -656,10 +675,16 @@ class VLMClient:
             return mock_vlm_only(question, model,
                                  error=f"image encoding failed: {exc}")
 
+        # Only the presence and answer legs are asked to point; the quality leg
+        # judges a whole-frame property and has nothing to box.
+        from .questions import GROUNDED_LEGS
+
+        grounding = bool(getattr(self.cfg, "vlm_grounding", False))
         legs = {}
         for leg in (LEG_QUALITY, LEG_PRESENCE, LEG_ANSWER):
-            legs[leg] = self.ask_leg(image_bgr, question, leg, system_for(leg),
-                                     image_uri=image_uri)
+            legs[leg] = self.ask_leg(
+                image_bgr, question, leg, system_for(leg), image_uri=image_uri,
+                grounding=grounding and leg in GROUNDED_LEGS)
 
         failed = [leg for leg, r in legs.items() if r["error"]]
         if failed:
@@ -671,6 +696,30 @@ class VLMClient:
         presence, presence_reasoning = parse_presence(legs[LEG_PRESENCE]["text"])
         answer, reasoning = parse_vlm_answer(legs[LEG_ANSWER]["text"])
 
+        # Geometry the model claimed. Placed in the ORIGINAL frame here, once,
+        # so nothing downstream has to know about the upload resize.
+        presence_boxes = grounding_result()
+        answer_boxes = grounding_result()
+        if grounding:
+            from . import vlm_grounding
+
+            original_wh = (image_bgr.shape[1], image_bgr.shape[0])
+            enc_wh = encoded_size(image_bgr)
+            presence_boxes = vlm_grounding.boxes_from_text(
+                legs[LEG_PRESENCE]["text"], original_wh, enc_wh,
+                leg=LEG_PRESENCE, default_label=question.effective_subject)
+            answer_boxes = vlm_grounding.boxes_from_text(
+                legs[LEG_ANSWER]["text"], original_wh, enc_wh,
+                leg=LEG_ANSWER, default_label="evidence for the answer")
+            # A presence box only means something when the model said the
+            # subject IS there. Keeping one attached to a "no" would draw a
+            # rectangle around something the same reply says is absent.
+            if presence != ANSWER_YES and presence_boxes.boxes:
+                presence_boxes.note = (
+                    f"the model gave coordinates but answered "
+                    f"'{presence}' on presence, so they are not drawn")
+                presence_boxes.boxes = []
+
         return {
             "quality": quality, "quality_reasoning": quality_reasoning,
             "subject_present": presence, "subject_reasoning": presence_reasoning,
@@ -681,6 +730,9 @@ class VLMClient:
             "model": legs[LEG_ANSWER]["model"],
             "elapsed_s": round(sum(r["elapsed_s"] for r in legs.values()), 3),
             "error": None, "is_mock": False,
+            "grounding": grounding,
+            "presence_boxes": presence_boxes,
+            "answer_boxes": answer_boxes,
             "legs": {leg: {"raw": r["text"], "elapsed_s": r["elapsed_s"]}
                      for leg, r in legs.items()},
         }
@@ -700,6 +752,15 @@ class VLMClient:
             return uris
         uris.append(array_to_data_uri(crop))
         return uris
+
+
+def grounding_result():
+    """An empty GroundingResult, or a stand-in when the module cannot be
+    imported. Every mode-3 result carries these two keys whether or not
+    grounding ran, so no caller needs to test for their presence."""
+    from .vlm_grounding import GroundingResult
+
+    return GroundingResult()
 
 
 # ─────────────────── Mode 3: three legs, three calls ─────────────────────────
@@ -763,7 +824,12 @@ def parse_presence(text: str) -> tuple[str, str]:
 def mock_vlm_only(question, model: str, error: Optional[str] = None) -> dict:
     """A canned mode-3 result. Quality "poor" and presence "unknown" on purpose:
     a mock must never assert that a photograph is fine or a subject visible when
-    nothing looked at it."""
+    nothing looked at it.
+
+    The two grounding results are empty for the same reason, and the point is
+    worth stating: a mock draws NO boxes. A rectangle on screen is the most
+    assertive thing this UI can render, and one produced when no model looked
+    would be the single worst output the demo could give."""
     note = "MOCK - no model examined this image."
     return {
         "quality": "poor", "quality_reasoning": note,
@@ -772,6 +838,9 @@ def mock_vlm_only(question, model: str, error: Optional[str] = None) -> dict:
         "reasoning": MOCK_REASONING.get(question.id, "MOCK - no model was called."),
         "raw_text": "", "model": model, "elapsed_s": 0.0,
         "error": error, "is_mock": True,
+        "grounding": False,
+        "presence_boxes": grounding_result(),
+        "answer_boxes": grounding_result(),
         "legs": {LEG_QUALITY: {"raw": "", "elapsed_s": 0.0},
                  LEG_PRESENCE: {"raw": "", "elapsed_s": 0.0},
                  LEG_ANSWER: {"raw": "", "elapsed_s": 0.0}},

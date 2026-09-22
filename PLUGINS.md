@@ -118,6 +118,21 @@ prompt for it:
 Modes 1 and 2 keep `system_prompt`. Preflight warns about any OCR question
 missing this.
 
+### Mode 3 and claimed boxes
+
+Nothing to configure per question — mode 3 asks its presence and answer legs
+for coordinates whenever `vlm_grounding` is on, whatever the question. Two
+things are worth knowing when you add one:
+
+- **A question with no trained class gets unscored boxes.** The claim is drawn,
+  but there is no detector box to compare it against, so the card says *"no
+  trained detector box to compare against"* rather than a number. That is
+  every Infra question today. Give a class trained weights and the IoU appears
+  with no further edit.
+- **`subject` is what the presence box gets labelled with.** It is already the
+  wording of the presence leg's question, so a vague subject produces both a
+  vague question and a vague caption.
+
 ## Add or remove an object class
 
 ```yaml

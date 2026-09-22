@@ -72,7 +72,8 @@ from pipeline.schemas import STOPPED_QUALITY  # noqa: E402
 # two special cases (a quality verdict with no numeric score, and presence
 # reported in words rather than as boxes).
 from demo_dash import FONTS, image_or_placeholder, tile, vlm_column  # noqa: E402
-from demo_dash_modes import detection_column, quality_column  # noqa: E402
+from demo_dash_modes import (claimed_box_lines, detection_column,  # noqa: E402
+                             quality_column)
 
 UPLOAD_ACCEPT = ",".join(["image/*"] + sorted(IMAGE_EXTENSIONS))
 
@@ -98,6 +99,11 @@ def _cfg_from_controls(gpu_url, vlm_model, vlm_mode, send_mode, threshold,
         quality_threshold=float(threshold) if threshold is not None else 65.0,
         ignore_resolution="ignore_res" in flags,
         run_downstream_on_fail="run_on_fail" in flags,
+        # Off by ABSENCE, not by default: the checkbox ships ticked, so leaving
+        # the controls alone gets grounding. Unticking it returns mode 3 to
+        # presence-in-words, which is what to do if the model's boxes turn out
+        # to be noise on a given photo set.
+        vlm_grounding="no_grounding" not in flags,
     )
 
 
@@ -210,7 +216,13 @@ def controls():
             dcc.Checklist(id="flags", className="opt", value=[], options=[
                 {"label": " ignore the resolution floor", "value": "ignore_res"},
                 {"label": " run downstream legs on a quality FAIL",
-                 "value": "run_on_fail"}]),
+                 "value": "run_on_fail"},
+                {"label": " mode 3: presence in words only, no claimed boxes",
+                 "value": "no_grounding"}]),
+            html.Div("Mode 3 asks the model where things are and draws what "
+                     "comes back, dashed, scored against the detector's own box "
+                     "where one exists. Tick the last option to turn that off.",
+                     className="field-help"),
         ], className="card"),
 
         html.Div([
@@ -315,6 +327,30 @@ def ocr_column(record, question):
 
 # ─────────────────────────────── Result rendering ────────────────────────────
 
+def evidence_column(record, question, mode_id):
+    """The answer leg's claimed evidence region — "what did you actually look
+    at to decide?"
+
+    Distinct from the presence box on purpose. "Where the subject is" and "what
+    I based my answer on" are different claims, and on the OCR questions the
+    difference is the interesting one: mode 3 pointing at the display it read
+    can be put straight next to the box PP-OCRv6 read from in modes 1 and 2.
+    """
+    boxes = getattr(record.vlm, "evidence_boxes", []) if record.vlm else []
+    note = record.extra.get("answer_grounding_note", "")
+    if not boxes and not note:
+        return None
+    children = [html.H4("3b · What the model looked at")]
+    if boxes:
+        children.extend(claimed_box_lines(boxes))
+        children.append(html.Div(
+            "Drawn dashed on the photograph in panel 2, alongside the presence "
+            "claim.", className="rc-muted"))
+    if note:
+        children.append(html.Div(note, className="banner banner-warn"))
+    return html.Div(children, className="rc-col")
+
+
 def mode_column(record, question, mode_id):
     """One mode's whole verdict, as a vertical stack - so three of them sit
     side by side and the row reads across."""
@@ -335,6 +371,16 @@ def mode_column(record, question, mode_id):
     gate = record.extra.get("gate")
     if gate:
         body.append(html.Div(f"Gate: {gate}", className="banner banner-info"))
+    claimed = ((getattr(record.detection, "claimed_boxes", []) if record.detection else [])
+               + (getattr(record.vlm, "evidence_boxes", []) if record.vlm else []))
+    if claimed:
+        scored = [c for c in claimed if c.iou is not None]
+        summary = (f"best IoU {max(c.iou for c in scored):.2f} vs detector"
+                   if scored else "not comparable — no detector box")
+        body.append(html.Div(
+            f"Model pointed at {len(claimed)} region"
+            f"{'s' if len(claimed) != 1 else ''} — {summary}",
+            className="rc-muted"))
     if record.ocr is not None and record.ocr.ran:
         body.append(html.Div(f"OCR read: {record.ocr.text or '—'}",
                              className="rc-muted mono"))
@@ -380,12 +426,12 @@ def detail_card(record, question, mode_id):
     gate = record.extra.get("gate")
     if gate:
         children.append(html.Div(f"Gate: {gate}", className="banner banner-info"))
-    children.append(html.Div([
-        quality_column(record),
-        detection_column(record),
-        ocr_column(record, question),
-        vlm_column(record, question),
-    ], className="rc-cols"))
+    panels = [quality_column(record), detection_column(record),
+              ocr_column(record, question), vlm_column(record, question)]
+    evidence = evidence_column(record, question, mode_id)
+    if evidence is not None:
+        panels.append(evidence)
+    children.append(html.Div(panels, className="rc-cols"))
     return html.Div(children, className="rc")
 
 

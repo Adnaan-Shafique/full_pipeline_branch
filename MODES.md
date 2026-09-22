@@ -96,21 +96,90 @@ rule, the threshold check arrives the same way — as a computed line of
 evidence, never as the answer. `DECISIONS.md` has the three failure modes that
 make that non-negotiable.
 
-## What mode 3 does NOT do
+## Mode 3's claimed boxes
 
-It draws no bounding boxes. Qwen3-VL can be asked for coordinates, but its
-grounding accuracy is well below YOLOX's, and a visibly wrong box on screen is
-worse than an honest "presence, not geometry". The detection panel in mode 3
-shows a YES/NO/UNKNOWN presence chip and the model's reasoning instead, and
-says so on the card.
+**This reverses an earlier decision, and the reasoning is worth keeping.** Mode
+3 used to draw no boxes at all. The argument was that Qwen3-VL's grounding
+accuracy is well below YOLOX's and a visibly wrong box is worse than an honest
+"presence, not geometry" — which is true, but was being *asserted* rather than
+shown, and it left the most-asked question about this pipeline ("where does the
+model think it is?") unanswerable.
 
-Mode 3 also has no numeric quality score. The card says "judged by the model,
+Mode 3 now asks the presence and answer legs for coordinates and draws what
+comes back, under three conditions that between them make it honest:
+
+1. **It cannot be mistaken for a detection.** Claimed boxes are drawn
+   **dashed**, in alternating white and black so they stay legible on sky and
+   on dark equipment alike, and captioned `model says: …`. Nothing else in this
+   demo is dashed — stage 1 is a solid green foreground box, stage 2 solid
+   per-class colours, stage 2b magenta text polygons. A viewer who has learned
+   those three reads a dashed box as a different kind of claim before reading
+   the caption.
+2. **It arrives with its own error bar.** Modes 1 and 2 have already run the
+   detector over the same photograph in the same frame, so where a trained
+   class exists the claimed box is scored against the detector's box and the
+   **IoU is printed in the caption and on the card**. The old objection becomes
+   a number on screen instead of a sentence in this file. Where no trained
+   class exists — every Infra question today — the card says *"no trained
+   detector box to compare against"*, which is not the same as scoring zero and
+   must never be rendered as if it were.
+3. **It is a claim, never an input.** The boxes live in `claimed_boxes`, not in
+   `detections`. Everything that reads `detections` — the VLM prompt's
+   detection block, `select_relevant()`, the full+crop chooser — would treat
+   them as detector output, and a claimed region fed back into a prompt would
+   have the model citing itself as evidence. The detections used for scoring
+   arrive *after* the three legs have answered and never reach a prompt.
+
+A box that cannot be placed confidently is **refused**, and the card says the
+model claimed a region that could not be placed. Refusals include a box
+covering the whole frame (that is the model declining to localise while
+appearing to comply), a degenerate or negative box, and absolute coordinates
+that cannot be scaled. `tests/test_grounding.py` pins each one.
+
+Turn it off with the *"mode 3: presence in words only"* option on 7873, or
+`vlm_grounding=False`, if the boxes turn out to be noise on a given photo set.
+
+### The coordinate trap
+
+`array_to_data_uri()` **downscales the photograph to 2048px** before sending
+it, so the model never sees the original frame. An absolute pixel coordinate it
+replies with is in the *resized* frame, and drawing it on a 4000×3000 original
+puts every box out by about 2× with nothing raising — the same shape of bug as
+this repo's "arrays, never paths" rule, one stage later.
+
+Two defences: the prompt asks for **integers normalized 0–1000**, the
+convention the Qwen-VL family was trained on and the only one immune to the
+resize; and `vlm_grounding.interpret_box()` accepts the other conventions
+anyway, scales them from the encoded frame, and **reports which reading it
+used** on the card. A systematic misread then shows up as every box on every
+photograph arriving as `absolute_px_encoded_frame`, rather than as boxes that
+are quietly wrong.
+
+### The quality leg is not grounded
+
+Sharpness, exposure and framing are properties of the whole frame. A box drawn
+around "the blurry part" would be fabricated precision, and unlike the other
+two legs there would be nothing to score it against. Only the presence and
+answer legs are asked to point.
+
+### Presence box vs evidence box
+
+They are different claims and are kept apart. The presence leg is asked *where
+the subject is*; the answer leg is asked *what it looked at to decide*. On the
+OCR questions the gap between them is the interesting part — mode 3 pointing at
+the display it read can be put straight next to the region PP-OCRv6 read from
+in modes 1 and 2.
+
+## What mode 3 still does NOT do
+
+Mode 3 has no numeric quality score. The card says "judged by the model,
 no numeric score" rather than printing a fabricated number next to PASS, and the
 quality panel omits the MM-IQA line entirely rather than showing `0.0`.
 
-It renders the photograph as it was judged: the plain, EXIF-corrected original,
-with **no green foreground box** — u2netp never ran in this mode, so drawing one
-would claim a crop that did not happen.
+It renders the photograph as it was judged: the EXIF-corrected original, with
+**no green foreground box and no detector boxes** — neither u2netp nor YOLOX ran
+in this mode, so drawing either would credit a component that did not run. The
+only thing that may appear on it is mode 3's own dashed claim.
 
 ## Tuning mode 3's prompts
 
@@ -147,12 +216,14 @@ and 2 share one. See `PROXY.md`.
 | `app/pipeline/questions.py` | The three legs, their default system prompts and their fixed user prompts |
 | `app/pipeline/prompts.py` | `PromptStore` — reads and writes `config/prompts.yaml` |
 | `app/pipeline/stage2b_ocr.py` | Stage 2b — scope, the confidence floor, the numeric rule |
+| `app/pipeline/vlm_grounding.py` | Reading, refusing and scoring the model's coordinates |
 | `app/pipeline/stage3_vlm.py` | `ask_leg()`, `ask_vlm_only()`, `parse_quality()`, `parse_presence()` |
 | `app/demo_dash_modes.py` | The batch UI, 7872 |
 | `app/demo_dash_pipeline.py` | The per-photograph UI, 7873 |
 | `config/questions/*.yaml` | The questions themselves — see `PLUGINS.md` |
 | `tests/test_modes.py` | 116 assertions |
 | `tests/test_ocr.py` | 85 assertions over stage 2b |
+| `tests/test_grounding.py` | 79 assertions over mode 3's claimed boxes |
 
 Each mode writes its own `pipeline_results.csv` and `results.json` under
 `demo_runs/<run_id>/<mode>/`. The CSV carries nine OCR columns, including

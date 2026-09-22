@@ -21,7 +21,7 @@ def check(name, cond, detail=""):
 
 
 from pipeline import modes as M                                      # noqa: E402
-from pipeline.questions import get_question                          # noqa: E402
+from pipeline.questions import build_detection_block, get_question   # noqa: E402
 from pipeline.schemas import (Detection, DetectionStageResult,        # noqa: E402
                               PipelineRecord, QualityStageResult,
                               STOPPED_COMPLETE, STOPPED_QUALITY, VLMAnswer)
@@ -333,8 +333,41 @@ rec3 = M._vlm_only_record(Path("/p/a.jpg"), "a", "hazard_warning", combined,
                           quality(True), 0.0)
 panel = ui.detection_column(rec3).text()
 check("mode 3 detection panel shows presence", "Subject visible" in panel, panel[:120])
-check("and states no boxes are drawn", "presence, not geometry" in panel)
 check("and does NOT claim no detections", "No detections" not in panel)
+# With no claimed geometry, the panel must say the model gave no location -
+# NOT stay silent, which would read as "it was not asked".
+check("with no claimed box it says so", "No box is drawn" in panel, panel[:300])
+
+# With one, the box is shown and labelled as a CLAIM. The word that has to be
+# there is the disclaimer: a dashed rectangle with no caption is read as a
+# detection by anyone who has seen the other two modes.
+from pipeline.vlm_grounding import GroundingBox, GroundingResult  # noqa: E402
+
+grounded = dict(combined)
+grounded["presence_boxes"] = GroundingResult(attempted=True, boxes=[
+    GroundingBox(box=[10.0, 20.0, 110.0, 140.0], label="a hazard sign",
+                 convention="normalized_1000", raw=[100, 200, 1000, 1000],
+                 leg="presence", iou=0.31)])
+grounded["answer_boxes"] = GroundingResult(attempted=True)
+rec3g = M._vlm_only_record(Path("/p/a.jpg"), "a", "hazard_warning", grounded,
+                           quality(True), 0.0)
+panel = ui.detection_column(rec3g).text()
+check("a claimed box is shown with its label", "a hazard sign" in panel, panel[:300])
+check("and is called a claim, not a detection",
+      "not a detection" in panel, panel[:400])
+check("and carries the agreement with the detector", "IoU 0.31" in panel, panel[:400])
+check("and says which convention the numbers were read in",
+      "normalized_1000" in panel, panel[:400])
+check("the claimed box never enters `detections`",
+      rec3g.detection.detections == [])
+check("so the model cannot end up citing its own claim as evidence",
+      not build_detection_block(rec3g.detection.detections))
+
+# An unscored box must say so rather than show nothing - silence would read as
+# a zero score.
+unscored = GroundingBox(box=[1.0, 2.0, 3.0, 4.0], label="x", leg="presence")
+check("an unscored claim names the absence of a comparison",
+      "no trained detector box" in unscored.agreement, unscored.agreement)
 
 rec12 = record("a", "yes")
 panel = ui.detection_column(rec12).text()

@@ -11,6 +11,53 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v0.8 — Mode 3 points at things · 2026-09-23
+
+| Commit | Change |
+|---|---|
+| (this) | mode 3's presence and answer legs are asked for coordinates, and what comes back is drawn and scored |
+
+**Reverses "mode 3 draws no bounding boxes"** (`MODES.md`, v0.6). The old
+reasoning — Qwen3-VL's grounding is well below YOLOX's, and a visibly wrong box
+is worse than an honest "presence, not geometry" — is still true. What changed
+is that the weakness can now be *measured on screen* instead of asserted in a
+document: modes 1 and 2 have already run the detector over the same photograph
+in the same frame, so each claimed box carries an IoU against it.
+
+Three conditions keep it honest. The boxes are drawn **dashed** in alternating
+white and black, a visual language nothing else in the demo uses, and captioned
+`model says: …`. They carry their IoU, or say *"no trained detector box to
+compare against"* — which is not the same as scoring zero, and is the case for
+every Infra question today. And they live in `claimed_boxes`, never in
+`detections`, so a claimed region cannot reach a prompt and have the model cite
+itself as evidence.
+
+**The coordinate trap.** `array_to_data_uri()` downscales to 2048px, so the
+model never sees the original frame and an absolute pixel reply is in the
+*resized* one — drawing it on a 4000×3000 photo is out by ~2× with nothing
+raising. The prompts ask for normalized 0–1000 (immune to the resize, and the
+convention Qwen-VL was trained on); `vlm_grounding.interpret_box()` accepts
+fractions and absolute pixels too, scales them from the encoded frame, and
+prints which reading it used so a systematic misread is visible.
+
+Boxes that cannot be placed confidently are **refused with a reason** — a
+whole-frame box especially, which is the model declining to localise while
+appearing to comply.
+
+**Not grounded:** the quality leg (sharpness and exposure are whole-frame
+properties, and there would be nothing to score a box against), and mocks,
+which claim no geometry at all.
+
+Also: a `vlm_grounding` config flag and a UI toggle on 7873; an evidence-region
+panel separating "where the subject is" from "what I looked at to decide";
+three new CSV columns (`vlm_boxes`, `vlm_box_convention`, `vlm_box_best_iou`).
+
+**798 assertions, thirteen suites** (804 with every dependency installed, 627
+bare). One existing assertion changed — `test_modes`'s "states no boxes are
+drawn" — replaced by assertions covering both the box and the no-box case.
+
+---
+
 ## v0.7 — Domains, OCR and the plugin layer · 2026-09-22
 
 | Commit | Change |

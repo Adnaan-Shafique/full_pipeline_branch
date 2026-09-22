@@ -72,12 +72,21 @@ examining one closely, and only 7873 has the domain selector and the OCR panel.
 | Quality | hard gate | advisory | judged by the model |
 | Detection | YOLOX-S boxes | YOLOX-S boxes | presence in words, no boxes |
 | OCR | PP-OCRv6 | PP-OCRv6 | **none — the model reads the text itself** |
+| Boxes | YOLOX-S, measured | YOLOX-S, measured | the model's own **claim**, dashed, scored against the detector |
 | A blurry photo whose sign is clearly detected | **dropped** | **answered** | answered if the model calls it usable |
 
 Mode 3 not running OCR is the point, not an omission. On a device reading, its
 answer is the model reading a seven-segment display unaided, next to two modes
 handed PP-OCRv6's transcription — which is the most direct measure of the
 model's competence this demo can produce.
+
+Mode 3 also **points at what it is talking about**. Its boxes are drawn dashed
+so they cannot be read as detections, and where a trained class exists they
+carry an IoU against the detector's own box on the same photograph — so "the
+model's grounding is worse than YOLOX's" is a number on screen rather than a
+claim in a document. Where no trained class exists, the card says so instead of
+showing a score. `MODES.md` has the reasoning and the coordinate trap behind
+it.
 
 One run fills all three; switching mode re-reads results rather than
 re-running, so the same photographs can be argued three ways in front of an
@@ -105,7 +114,7 @@ pip install -r requirements-demo.txt
 # from where, which OCR models are present, and every config warning.
 python tools/preflight.py --port 7873
 
-# Every test (711 assertions, twelve suites; 717 with every dependency present)
+# Every test (798 assertions, thirteen suites; 804 with every dependency present)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 python app/demo_dash_pipeline.py   # http://<host>:7873
@@ -177,11 +186,12 @@ app/
     registry.py         reads config/ into domains, classes and questions
     question_types.py   the Question dataclass and the pure prompt helpers
     stage2b_ocr.py      the OCR stage; ocr_engine.py drives PP-OCRv6
+    vlm_grounding.py    mode 3's claimed boxes: read, refuse, place, score
   vendor/yolox/         vendored YOLOX utils (Apache 2.0)
   quality_check.py      vendored from the original quality tool
   foreground_segmentation.py
 tools/                  preflight + one smoke script per stage
-tests/                  twelve standalone suites - no pytest, no build step
+tests/                  thirteen standalone suites - no pytest, no build step
 deploy/                 systemd units and an env template
 models/                 u2netp.onnx and ocr/*.onnx (committed); best_ckpt.pth (copied in)
 ```

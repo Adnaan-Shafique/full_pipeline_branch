@@ -196,7 +196,11 @@ def run_all_modes(image_paths, question_id: str, cfg,
         plain = run_dir / MODE_VLM_ONLY / "images" / f"{stem}.jpg"
         results[MODE_VLM_ONLY].append(_vlm_only_record(
             path, stem, question_id, combined, quality, started,
-            image_bgr=image_bgr, image_path=plain))
+            image_bgr=image_bgr, image_path=plain,
+            # Scored against, never fed in - see _vlm_only_record's docstring.
+            # `relevant` rather than every detection, so a warning sign that
+            # happens to be in shot is not what an antenna claim is measured on.
+            score_against=relevant))
 
     report(total, "writing results")
     for mode in MODE_ORDER:
@@ -229,13 +233,24 @@ def _record(path, stem, question_id, quality, detection, vlm, stopped, started,
     return record
 
 
-def _write_plain(image_bgr, dest: Path) -> Optional[str]:
-    """The photograph as mode 3 saw it, unannotated."""
+def _write_plain(image_bgr, dest: Path, claimed=None) -> Optional[str]:
+    """The photograph as mode 3 saw it.
+
+    Unannotated when the model claimed no geometry - u2netp never ran here and
+    YOLOX's boxes belong to the other two modes, so drawing either would credit
+    a component that did not run. When the model DID point somewhere, its own
+    dashed boxes are drawn and nothing else: what is on this image is only ever
+    what mode 3 itself produced.
+    """
     import cv2
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if not cv2.imwrite(str(dest), image_bgr):
+        out = image_bgr
+        if claimed:
+            from .detect_draw import draw_claimed_boxes
+            out = draw_claimed_boxes(image_bgr, claimed)
+        if not cv2.imwrite(str(dest), out):
             return None
     except Exception:
         return None
@@ -243,17 +258,35 @@ def _write_plain(image_bgr, dest: Path) -> Optional[str]:
 
 
 def _vlm_only_record(path, stem, question_id, combined, classical_quality,
-                     started, image_bgr=None, image_path=None) -> PipelineRecord:
-    """Mode 3's result, mapped onto the same three panels the other modes fill.
+                     started, image_bgr=None, image_path=None,
+                     score_against=None) -> PipelineRecord:
+    """Mode 3's result, mapped onto the same panels the other modes fill.
 
     The quality and detection panels are filled from the model's own judgement
-    rather than from u2netp and YOLOX, and both say so: assessed_by="vlm" and a
-    presence string instead of boxes. The frame size is carried over from the
-    classical pass because it is a property of the file, not a judgement.
+    rather than from u2netp and YOLOX, and both say so: assessed_by="vlm", and
+    a presence string plus whatever geometry the model CLAIMED rather than
+    anything measured. The frame size is carried over from the classical pass
+    because it is a property of the file, not a judgement.
+
+    `score_against` is the trained detector's detections for this same
+    photograph, used ONLY to compute an IoU for each claimed box. Mode 3 has
+    already answered by the time they arrive and they never reach a prompt -
+    the scoring turns "its grounding is worse than YOLOX's" from a claim in a
+    document into a number on the card. If this ever becomes an input rather
+    than a scorer, mode 3 stops being "everything by the model".
     """
+    from . import vlm_grounding
+
+    presence_boxes = combined.get("presence_boxes") or vlm_grounding.GroundingResult()
+    answer_boxes = combined.get("answer_boxes") or vlm_grounding.GroundingResult()
+    if score_against:
+        vlm_grounding.compare_to_detections(presence_boxes, score_against)
+        vlm_grounding.compare_to_detections(answer_boxes, score_against)
+    claimed = list(presence_boxes.boxes) + list(answer_boxes.boxes)
+
     annotated = None
     if image_bgr is not None and image_path is not None:
-        annotated = _write_plain(image_bgr, Path(image_path))
+        annotated = _write_plain(image_bgr, Path(image_path), claimed=claimed)
 
     quality = QualityStageResult(
         passed=(combined["quality"] == "good"),
@@ -265,11 +298,20 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
         height=classical_quality.height, assessed_by="vlm",
         annotated_path=annotated)
 
+    # `detections` stays EMPTY even when the model claimed boxes. Everything
+    # that reads that field - the VLM prompt's detection block, select_relevant,
+    # the full+crop chooser - treats its contents as detector output, and a
+    # claimed region fed back in as evidence would have the model citing itself.
+    # The claim lives in claimed_boxes, which only the renderers read.
     detection = DetectionStageResult(
-        detections=[], annotated_path=None,
-        model_name=f"{combined['model']} (presence only, no boxes)",
+        detections=[], annotated_path=annotated if claimed else None,
+        model_name=(f"{combined['model']} "
+                    + ("(presence + claimed region, not a detector)" if claimed
+                       else "(presence only, no boxes)")),
         is_stub=False, note="", presence=combined["subject_present"],
-        presence_reasoning=combined.get("subject_reasoning", ""))
+        presence_reasoning=combined.get("subject_reasoning", ""),
+        claimed_boxes=[b for b in claimed if b.leg == "presence"],
+        grounding_note=presence_boxes.note)
 
     # Stated explicitly rather than left as None. Mode 3 not running OCR is a
     # deliberate property of the mode - the model read whatever text is in the
@@ -282,12 +324,16 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
         answer=combined["answer"], reasoning=combined["reasoning"],
         raw_text=combined.get("raw_text", ""), model=combined["model"],
         elapsed_s=combined.get("elapsed_s", 0.0), error=combined.get("error"),
-        is_mock=combined.get("is_mock", False))
+        is_mock=combined.get("is_mock", False),
+        evidence_boxes=[b for b in claimed if b.leg == "answer"])
 
     return _record(path, stem, question_id, quality, detection, vlm,
                    STOPPED_COMPLETE, started,
                    extra={"quality_reasoning": combined.get("quality_reasoning", ""),
-                          "legs": combined.get("legs", {})},
+                          "legs": combined.get("legs", {}),
+                          "grounding_summary": vlm_grounding.summarise(presence_boxes),
+                          "answer_grounding_summary": vlm_grounding.summarise(answer_boxes),
+                          "answer_grounding_note": answer_boxes.note},
                    ocr=ocr)
 
 
@@ -376,6 +422,11 @@ def run_vlm_only(image_paths, question_id: str, cfg, progress_cb: ProgressCb = N
             max_area_frac=cfg.max_area_frac, ignore_resolution=cfg.ignore_resolution)
         combined = client.ask_vlm_only(image_bgr, question, prompts=prompts)
         plain = run_dir / MODE_VLM_ONLY / "images" / f"{path.stem}.jpg"
+        # No score_against here, deliberately. This path re-runs ONLY mode 3's
+        # legs, so the detector has not run in it, and a claimed box comes back
+        # unscored - the card then says "no trained detector box to compare
+        # against" rather than showing a stale IoU from the previous full run,
+        # which would be scoring a new box against an old comparison.
         records.append(_vlm_only_record(path, path.stem, question_id, combined,
                                         classical, started, image_bgr=image_bgr,
                                         image_path=plain))

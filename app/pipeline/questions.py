@@ -168,6 +168,55 @@ ANSWER_USER_TEMPLATE = """{question_text}
 Respond with JSON only, no markdown fence:
 {{"answer": "yes" | "no" | "unknown", "reasoning": "<2-3 sentences citing the specific visual evidence in the image>"}}"""
 
+# ── Grounded variants: the same legs, asked to point ─────────────────────────
+# Used when cfg.vlm_grounding is on. Three things about the wording are
+# load-bearing and should not be "tidied":
+#
+#   · "integers from 0 to 1000, normalized" is the convention the Qwen-VL family
+#     was trained to emit. It is also the only one immune to array_to_data_uri()
+#     downscaling the photograph to 2048px before sending it - an absolute pixel
+#     reply is in THAT frame, and drawing it on a 4000px original is out by ~2x.
+#     vlm_grounding.interpret_box() handles the other conventions anyway, but
+#     this is the one we want back.
+#   · "tightly, around the object itself - not the whole image" exists because
+#     the cheapest way to comply with a box request is to return the frame.
+#     That is the model declining to localise while appearing to obey, and
+#     interpret_box() rejects it.
+#   · "omit it entirely" gives a way to decline that is not a wrong box. A model
+#     with no way to say "I can't" will invent coordinates.
+GROUNDING_RULE = (
+    'Coordinates are integers from 0 to 1000, normalized to the image width and '
+    'height - [0, 0] is the top-left corner and [1000, 1000] the bottom-right - '
+    'written as [x1, y1, x2, y2]. Box it tightly, around the object itself, not '
+    'the whole image. If you cannot locate it confidently, omit the box entirely '
+    'rather than guessing.'
+)
+
+PRESENCE_USER_TEMPLATE_GROUNDED = """Is {subject} visible in this photograph?
+yes     = it is visible and identifiable.
+no      = it is not in this photograph.
+unknown = something may be there but it cannot be confidently identified.
+
+If it is visible, give one bounding box around it. {grounding_rule}
+
+Respond with JSON only, no markdown fence:
+{{"present": "yes" | "no" | "unknown", "box": [x1, y1, x2, y2], "reasoning": "<1-2 sentences: is it visible, and where>"}}"""
+
+ANSWER_USER_TEMPLATE_GROUNDED = """{question_text}
+{semantics}
+
+Also point to the region of the image you based your answer on - the thing you
+actually looked at to decide. {grounding_rule}
+
+Respond with JSON only, no markdown fence:
+{{"answer": "yes" | "no" | "unknown", "evidence_box": [x1, y1, x2, y2], "reasoning": "<2-3 sentences citing the specific visual evidence in the image>"}}"""
+
+# The quality leg is deliberately NOT grounded. Sharpness, exposure and framing
+# are properties of the whole frame; a box drawn around "the blurry part" would
+# be fabricated precision, and unlike the other two legs there is nothing to
+# score it against. See DECISIONS.md.
+GROUNDED_LEGS = (LEG_PRESENCE, LEG_ANSWER)
+
 
 def default_leg_system(question: Question, leg: str) -> str:
     """The built-in system prompt for one leg of mode 3.
@@ -193,16 +242,28 @@ def default_leg_system(question: Question, leg: str) -> str:
     raise KeyError(f"Unknown leg {leg!r}; expected one of {LEGS}")
 
 
-def render_leg_user(question: Question, leg: str) -> str:
+def render_leg_user(question: Question, leg: str, grounding: bool = False) -> str:
     """The user prompt for one leg. Not editable: it carries the JSON contract
     the parser depends on, and a demo is not the place to discover that someone
-    removed it."""
+    removed it.
+
+    `grounding` swaps the presence and answer legs for variants that also ask
+    for coordinates. It defaults to False so that every existing caller - the
+    prompt viewer on 7872, the tests, tools - keeps getting the prompt it
+    always got; only the mode-3 runner passes cfg.vlm_grounding through.
+    """
     if leg == LEG_QUALITY:
         return QUALITY_USER_TEMPLATE
     if leg == LEG_PRESENCE:
-        return PRESENCE_USER_TEMPLATE.format(subject=question.effective_subject)
+        template = (PRESENCE_USER_TEMPLATE_GROUNDED if grounding
+                    else PRESENCE_USER_TEMPLATE)
+        return template.format(subject=question.effective_subject,
+                               grounding_rule=GROUNDING_RULE)
     if leg == LEG_ANSWER:
-        return ANSWER_USER_TEMPLATE.format(
+        template = (ANSWER_USER_TEMPLATE_GROUNDED if grounding
+                    else ANSWER_USER_TEMPLATE)
+        return template.format(
             question_text=question.effective_question_text,
-            semantics=question.answer_semantics)
+            semantics=question.answer_semantics,
+            grounding_rule=GROUNDING_RULE)
     raise KeyError(f"Unknown leg {leg!r}; expected one of {LEGS}")

@@ -30,6 +30,105 @@ def color_for(label: str) -> tuple[int, int, int]:
     return _PALETTE[int(digest[:8], 16) % len(_PALETTE)]
 
 
+# Mode 3's claimed boxes are drawn DASHED and in two tones, and nothing else in
+# this demo is. That is the whole design: stage 1 draws a solid green foreground
+# box, stage 2 solid per-class colours, stage 2b magenta text polygons, and a
+# viewer who has learned those three reads a dashed box as "different kind of
+# thing" before reading the caption. It has to, because the claim behind it is
+# different - a model said this is where it is, and nothing measured it.
+#
+# Two tones rather than one colour because a claimed box lands anywhere: white
+# vanishes on a bright sky and black on dark equipment, while alternating dashes
+# stay legible on both.
+CLAIMED_DASH_PX = 18
+CLAIMED_TONE_A = (255, 255, 255)   # white
+CLAIMED_TONE_B = (20, 20, 20)      # near-black
+
+
+def _dashed_line(out, p1, p2, thickness, dash=CLAIMED_DASH_PX):
+    """A two-tone dashed segment from p1 to p2."""
+    import cv2
+    import math
+
+    (x1, y1), (x2, y2) = p1, p2
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length < 1:
+        return
+    steps = max(1, int(length // dash))
+    for i in range(steps + 1):
+        a = i / (steps + 1)
+        b = min(1.0, (i + 1) / (steps + 1))
+        start = (int(x1 + (x2 - x1) * a), int(y1 + (y2 - y1) * a))
+        end = (int(x1 + (x2 - x1) * b), int(y1 + (y2 - y1) * b))
+        colour = CLAIMED_TONE_A if i % 2 == 0 else CLAIMED_TONE_B
+        cv2.line(out, start, end, colour, thickness, cv2.LINE_AA)
+
+
+def draw_claimed_boxes(image_bgr, claimed: Iterable, thickness: int | None = None):
+    """Boxes the MODEL claimed, drawn so they cannot be mistaken for detections.
+
+    Each carries a caption that says who is claiming it and, where the trained
+    detector ran on the same photograph, how well the two agree. That second
+    part is what makes drawing these defensible: the box arrives with its own
+    error bar rather than as an unqualified assertion.
+    """
+    import cv2
+
+    out = image_bgr.copy()
+    h, w = out.shape[:2]
+    t = thickness or max(2, round(min(h, w) / 400))
+    font_scale = max(0.5, min(h, w) / 1200)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    # Caption plates already drawn, so later ones can be pushed clear of them.
+    # The presence box and the answer's evidence box usually land on the SAME
+    # object - that is the normal, good case - so without this the second
+    # caption paints over the first and one of the two claims becomes invisible.
+    occupied = []
+
+    for claim in claimed:
+        x1, y1, x2, y2 = (int(round(v)) for v in claim.box)
+        x1, x2 = max(0, min(x1, w - 1)), max(0, min(x2, w - 1))
+        y1, y2 = max(0, min(y1, h - 1)), max(0, min(y2, h - 1))
+        for p1, p2 in (((x1, y1), (x2, y1)), ((x2, y1), (x2, y2)),
+                       ((x2, y2), (x1, y2)), ((x1, y2), (x1, y1))):
+            _dashed_line(out, p1, p2, t)
+
+        caption = f"model says: {claim.label or 'here'}"
+        if claim.iou is not None:
+            caption += f"  (IoU {claim.iou:.2f} vs detector)"
+        (tw, th), baseline = cv2.getTextSize(caption, font, font_scale, max(1, t // 2))
+        # INSIDE the box, below its top edge - not above it like every other
+        # caption in this demo. draw_detections() puts its class captions above
+        # their boxes, and mode 3's claimed box usually sits near the detector's
+        # on the same object, so a caption above would land on top of the one
+        # naming the detection and hide the provenance both are there to show.
+        cap_y = y1 + th + baseline + 2
+        if cap_y + baseline > h:
+            cap_y = max(th + baseline, y1 - baseline - 2)
+        cap_x = min(x1, max(0, w - tw - 6))
+
+        def _overlaps(top, bottom, left, right):
+            return any(not (bottom < o_top or top > o_bottom
+                            or right < o_left or left > o_right)
+                       for o_top, o_bottom, o_left, o_right in occupied)
+
+        step = th + baseline + 4
+        for _ in range(6):   # bounded: give up rather than march off the image
+            top, bottom = cap_y - th - baseline, cap_y + baseline
+            if not _overlaps(top, bottom, cap_x, cap_x + tw + 4) or bottom + step > h:
+                break
+            cap_y += step
+        occupied.append((cap_y - th - baseline, cap_y + baseline,
+                         cap_x, cap_x + tw + 4))
+        # Solid dark plate behind white text: the caption must stay readable
+        # over whatever the box happens to sit on.
+        cv2.rectangle(out, (cap_x, cap_y - th - baseline),
+                      (cap_x + tw + 4, cap_y + baseline), CLAIMED_TONE_B, -1)
+        cv2.putText(out, caption, (cap_x + 2, cap_y), font, font_scale,
+                    CLAIMED_TONE_A, max(1, t // 2), cv2.LINE_AA)
+    return out
+
+
 def draw_detections(image_bgr, detections: Iterable, thickness: int | None = None):
     """Rectangle plus a filled '<label> <conf>' caption, matching what the real
     detector's own plotting produces. Returns a copy; never mutates the input,

@@ -157,6 +157,14 @@ class DetectionStageResult:
     # this result came from a real detector and the box list is the answer.
     presence: Optional[str] = None          # "yes" | "no" | "unknown"
     presence_reasoning: str = ""
+    # Mode 3 only: regions the MODEL said the subject occupies, as
+    # vlm_grounding.GroundingBox. Kept in a field of their own rather than in
+    # `detections` because they are a different kind of thing - a claim, not a
+    # measurement - and anything that reads `detections` (the VLM prompt's
+    # detection block, select_relevant, the crop chooser) must not pick them up
+    # and start treating them as detector output.
+    claimed_boxes: list = field(default_factory=list)
+    grounding_note: str = ""
 
     def top(self) -> Optional[Detection]:
         return max(self.detections, key=lambda d: d.confidence, default=None)
@@ -262,6 +270,11 @@ class VLMAnswer:
     elapsed_s: float
     error: Optional[str] = None
     is_mock: bool = False
+    # Mode 3 only: the region the model said it drew its answer from. Distinct
+    # from the presence box - "where the subject is" and "what I looked at to
+    # decide" are not the same claim, and on the OCR questions the difference
+    # is the whole point (which display did you actually read?).
+    evidence_boxes: list = field(default_factory=list)
 
     @property
     def chip(self) -> str:
@@ -340,6 +353,18 @@ class PipelineRecord:
             "ocr_numeric_value": (o.numeric["value"] if o and o.numeric else None),
             "ocr_numeric_passes": (o.numeric["passes"] if o and o.numeric else None),
             "ocr_error": ((o.error or "") if o else ""),
+            # Mode 3's claimed geometry. Blank for modes 1 and 2, which draw
+            # real detector boxes and have nothing to claim.
+            "vlm_boxes": "; ".join(
+                f"[{int(b.box[0])},{int(b.box[1])},{int(b.box[2])},{int(b.box[3])}]"
+                for b in (d.claimed_boxes if d else [])),
+            "vlm_box_convention": "; ".join(
+                sorted({b.convention for b in (d.claimed_boxes if d else [])})),
+            # None, not 0.0, when there was no detector box to compare against -
+            # "we did not measure" and "it scored zero" are opposite findings.
+            "vlm_box_best_iou": (
+                max((b.iou for b in d.claimed_boxes if b.iou is not None), default=None)
+                if d and d.claimed_boxes else None),
             "vlm_answer": (v.answer if v else ""),
             "vlm_reasoning": (v.reasoning if v else ""),
             "vlm_model": (v.provenance if v else ""),
@@ -359,6 +384,7 @@ FLAT_ROW_COLUMNS = [
     "detection_source", "detections", "detection_note",
     "ocr_engine", "ocr_scope", "ocr_text", "ocr_confidence", "ocr_lines",
     "ocr_elapsed_ms", "ocr_numeric_value", "ocr_numeric_passes", "ocr_error",
+    "vlm_boxes", "vlm_box_convention", "vlm_box_best_iou",
     "vlm_answer", "vlm_reasoning", "vlm_model", "vlm_elapsed_s", "vlm_error",
     "stopped_at", "source_path",
 ]

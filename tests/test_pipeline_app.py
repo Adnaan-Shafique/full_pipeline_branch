@@ -312,8 +312,10 @@ check("execute_run is not itself a callback",
       "@app.callback" not in src.split("def execute_run(")[0].rsplit("\n\n", 1)[-1])
 
 print("\nit imports the shared renderers rather than copying them")
-check("quality_column comes from demo_dash_modes",
-      "from demo_dash_modes import detection_column, quality_column" in src)
+check("quality_column and detection_column come from demo_dash_modes",
+      "from demo_dash_modes import" in src
+      and "quality_column" in src.split("from demo_dash_modes import")[1][:200]
+      and "detection_column" in src.split("from demo_dash_modes import")[1][:200])
 check("vlm_column comes from the frozen UI",
       "from demo_dash import" in src and "vlm_column" in src)
 check("no class names are hard-coded in the UI",

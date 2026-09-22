@@ -149,6 +149,15 @@ class PipelineConfig:
     # little context for a VLM to judge "is the sky above this blocked?".
     # Pad to at least this fraction of the frame's shorter side instead.
     crop_min_frame_frac: float = 0.20
+    # Mode 3 only: ask the presence and answer legs for coordinates, and draw
+    # what comes back. MODES.md used to rule this out on the grounds that the
+    # model's grounding is well below YOLOX's - which is true, and was being
+    # ASSERTED rather than shown. The boxes are now drawn in a visual language
+    # that cannot be mistaken for a detection, and scored against the detector's
+    # own boxes on the same photograph where one exists, so the weakness is
+    # measured on screen instead of argued in a document. Set False to go back
+    # to presence-in-words only.
+    vlm_grounding: bool = True
     # Repeatability beats flair when running live. Note the server validates
     # repetition_penalty with ge=1.0, so 1.0 is the floor, not 0.
     max_new_tokens: int = 300

@@ -30,7 +30,7 @@ No build step, no linter, no pytest. Suites are standalone scripts that print
 `N passed, M failed` and exit non-zero on failure.
 
 ```bash
-# Every suite (711 assertions across twelve files)
+# Every suite (798 assertions across thirteen files)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 # One suite, with its output
@@ -67,9 +67,9 @@ Tests stub `cv2`, `dash` and `requests`. Measured on three interpreters:
 
 | Interpreter | Assertions | Suites failing |
 |---|---|---|
-| everything installed | **717** | 0 |
-| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **711** | 0 |
-| bare — nothing installed at all, `requests` and `pyyaml` included | **540** | 2, both pre-existing |
+| everything installed | **804** | 0 |
+| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **798** | 0 |
+| bare — nothing installed at all, `requests` and `pyyaml` included | **627** | 2, both pre-existing |
 
 Keep that middle row at zero — a suite that needs torch cannot run where it is
 most needed.
@@ -152,6 +152,13 @@ questions whose YAML sets `ocr.enabled` — four today — and **never in mode 3
 where the model reads the text itself. That asymmetry is the comparison
 `demo_dash_pipeline.py` exists to show, so do not "fix" it by feeding mode 3
 the OCR output.
+
+### Mode 3's claimed boxes (grounding)
+
+`app/pipeline/vlm_grounding.py` turns coordinates the model wrote into boxes
+worth drawing. Mode 3's presence and answer legs are asked to point (the
+quality leg is not — it judges a whole-frame property). `MODES.md` has the full
+reasoning; the three rules that must not be relaxed are in the traps below.
 
 ### Questions, domains and classes — the plugin layer
 
@@ -243,6 +250,28 @@ answer leg reuses `system_prompt`, and mode 3 runs no OCR — so without the
 variant, the one mode meant to show what the model reads unaided is told to
 expect evidence that never arrives. This was a real bug on all four OCR
 questions. `preflight.py` warns about any that lack it.
+
+**A claimed box is not a detection, and must never become one.** Mode 3's
+boxes live in `DetectionStageResult.claimed_boxes`, and `detections` stays
+EMPTY. Everything that reads `detections` — `build_detection_block()`,
+`select_relevant()`, the full+crop chooser — treats its contents as detector
+output, so a claimed region put there would end up in a prompt as evidence and
+the model would be citing itself. The detections passed to
+`compare_to_detections()` arrive after the legs have answered and never reach a
+prompt.
+
+**Absolute coordinates are in the ENCODED frame, not the original.**
+`array_to_data_uri()` downscales to `MAX_UPLOAD_SIDE_PX` (2048), so the model
+never sees the original. `encoded_size()` mirrors that arithmetic and
+`interpret_box()` scales from it; if the resize in `array_to_data_uri()` ever
+changes, `encoded_size()` must change with it or every absolute box lands at
+the wrong scale silently. The prompt asks for normalized 0-1000 precisely to
+avoid depending on this.
+
+**"Unscored" is not "scored zero".** A claimed box with no trained class to
+compare against carries `iou is None` and the wording *"no trained detector box
+to compare against"*. Rendering that as 0.00, or as a blank, states the
+opposite of what was found. Every Infra question is in this case today.
 
 **`yolox_input_size` is `(640, 480)`, not the stock square.** For portrait
 photographs the ratio is identical either way; only landscape diverges (by 4/3).

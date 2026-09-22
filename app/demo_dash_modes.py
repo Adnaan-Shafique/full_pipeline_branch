@@ -757,15 +757,35 @@ def detection_column(record):
 
     if d.presence is not None:
         chip = {"yes": "chip-yes", "no": "chip-no"}.get(d.presence, "chip-unknown")
+        claimed = getattr(d, "claimed_boxes", []) or []
         children = [
-            html.H4("2 · Subject visible?"),
+            html.H4("2 · Subject visible?" if not claimed
+                    else "2 · Subject visible, and where?"),
+        ]
+        if claimed:
+            # The dashed boxes, drawn on the photograph. Nothing else is on this
+            # image: no u2netp crop, no detector boxes - only what mode 3 itself
+            # produced.
+            children.append(image_or_placeholder(
+                d.annotated_path, "The claimed region could not be rendered"))
+        children += [
             html.Div(html.Span(d.presence.upper(), className=f"chip {chip}")),
             html.Div(d.presence_reasoning or "", className="rc-reason"),
             html.Div(html.Span(d.model_name, className="pill pill-stub"),
                      className="rc-line"),
-            html.Div("Judged by the model. No boxes are drawn in this mode — it "
-                     "reports presence, not geometry.", className="rc-muted"),
         ]
+        children.extend(claimed_box_lines(claimed))
+        if getattr(d, "grounding_note", ""):
+            children.append(html.Div(d.grounding_note, className="banner banner-warn"))
+        if claimed:
+            children.append(html.Div(
+                "Dashed boxes are the MODEL's claim about where the subject is, "
+                "not a detection. Nothing measured them.", className="rc-muted"))
+        else:
+            children.append(html.Div(
+                "Judged by the model. No box is drawn — it reported presence "
+                "without a location it was confident enough to give.",
+                className="rc-muted"))
         return html.Div(children, className="rc-col")
 
     children = [
@@ -784,6 +804,29 @@ def detection_column(record):
     if d.note:
         children.append(html.Div(d.note, className="banner banner-warn"))
     return html.Div(children, className="rc-col")
+
+
+def claimed_box_lines(claimed):
+    """One line per box the model claimed: what it said is there, and how well
+    it agrees with the trained detector where one ran.
+
+    The agreement wording carries the honesty here. An unscored box says so
+    rather than showing nothing - "no trained detector box to compare against"
+    and "it scored zero" are opposite findings, and a blank would read as the
+    second. The raw coordinates and the convention used to read them are shown
+    too: a systematic misread shows up as every box on every photo arriving in
+    the same unexpected convention, which is invisible from the boxes alone.
+    """
+    lines = []
+    for claim in claimed or []:
+        lines.append(html.Div([
+            html.Span(claim.label or "region", className="rc-name"),
+            html.Span(f" — {claim.agreement}", className="rc-muted"),
+        ], className="rc-line"))
+        lines.append(html.Div(
+            f"read as {claim.convention} from {claim.raw}",
+            className="rc-muted mono"))
+    return lines
 
 
 def result_card(record, question):

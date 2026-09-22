@@ -8,6 +8,74 @@ Newest first. Dates are when the decision was made, not when it was written up.
 
 ---
 
+## 2026-09-23 · Mode 3 draws boxes after all, scored against the detector
+
+**Decision.** Reverses "mode 3 draws no bounding boxes". The presence and
+answer legs are asked for coordinates; what comes back is drawn dashed,
+captioned `model says: …`, and — where a trained class exists — scored against
+the detector's own box on the same photograph, with the IoU printed.
+
+**Why the original decision was right, and why it still changed.** The original
+reasoning was that Qwen3-VL's grounding is well below YOLOX's and a visibly
+wrong box is worse than an honest "presence, not geometry". Both halves are
+still true. What was wrong was the conclusion: the weakness was being asserted
+in a document nobody reads during a demo, while the question it was avoiding —
+*where does the model think it is?* — is the first thing anyone asks of a
+vision model, and mode 3 exists precisely to expose what the model can do
+alone.
+
+Drawing it became defensible once the box could arrive with its own error bar.
+Modes 1 and 2 have already run the detector over that exact photograph in the
+same frame, so the IoU is free, and the claim becomes measurable on screen
+rather than argued here. Three conditions make it honest: dashed boxes that
+cannot be confused with the three solid visual languages already in use; an
+IoU in the caption; and a refusal path for anything that cannot be placed
+confidently — a whole-frame box especially, which is the model declining to
+localise while appearing to comply.
+
+**The claim is never an input.** The boxes live in `claimed_boxes`, not in
+`detections`, because everything that reads `detections` treats it as detector
+output and a claimed region fed back into a prompt would have the model citing
+itself. The detections used for scoring arrive after the legs have answered.
+
+**What it costs.** A wrong box can now appear on screen — that risk was real
+and has been mitigated, not eliminated. Two prompts per grounded leg to keep in
+step, a second visual language to learn, and a `vlm_grounding=False` escape
+hatch to remember when the boxes are noise on a given photo set. And where no
+trained class exists — every Infra question today — the box is unscored, so it
+carries "no trained detector box to compare against" rather than a number.
+That wording is load-bearing: it is not the same as scoring zero.
+
+---
+
+## 2026-09-23 · Normalized 0-1000 coordinates, and refusing what cannot be placed
+
+**Decision.** The grounded prompts ask for integers normalized 0-1000.
+`vlm_grounding.interpret_box()` also accepts fractions and absolute pixels,
+scales the latter from the ENCODED frame, and reports which reading it used.
+Anything it cannot place confidently is refused with a reason rather than
+drawn.
+
+**Why.** `array_to_data_uri()` downscales to 2048px before sending, so the
+model never sees the original frame. An absolute pixel reply is in the resized
+frame, and drawing it on a 4000x3000 original is out by about 2x with nothing
+raising — the same class of bug as computing a box on an EXIF-corrected array
+and drawing it on a re-read file. Normalized coordinates are immune to the
+resize, and are the convention the Qwen-VL family was trained to emit, so that
+is what the prompt asks for.
+
+Accepting the other conventions anyway, and naming which one was used, is the
+part that makes a systematic misread visible: it shows up as every box on every
+photograph arriving as `absolute_px_encoded_frame`, instead of as boxes that
+are quietly wrong.
+
+**What it costs.** A model that returns absolute coordinates on a small image
+cannot be told apart from one returning normalized ones — both are under 1000.
+The demo accepts that ambiguity rather than adding a round-trip to resolve it;
+the convention is printed, so a human can see it.
+
+---
+
 ## 2026-09-22 · The questions are YAML, and the loader never raises
 
 **Decision.** Questions, domains and object classes move out of
@@ -361,6 +429,12 @@ A suite may carry a section that needs a real dependency, provided it
 stubs `cv2` only when a real one is absent, so its live-engine section can run
 against the committed ONNX files where they can be loaded, and is skipped with
 a printed line where they cannot.
+
+**A claim is never rendered as a measurement.** Anything the model asserts
+about geometry is drawn in a visual language of its own, captioned as a claim,
+and scored against something measured where that is possible. "We could not
+measure" and "it scored zero" are opposite findings and never share a
+rendering.
 
 **Three different nothings are never conflated.** A stage that could not run,
 a stage that ran and found nothing, and a stage nobody asked to run are three
