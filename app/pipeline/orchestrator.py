@@ -34,7 +34,13 @@ def new_run_id() -> str:
 
 def run_pipeline(image_paths: Iterable, question_id: str, cfg,
                  progress_cb: ProgressCb = None) -> list[PipelineRecord]:
-    """Run every image through quality -> detection -> VLM.
+    """Run every image through quality -> detection -> OCR -> VLM.
+
+    OCR is stage 2b and runs only for the questions whose YAML sets
+    `ocr.enabled: true`; for every other question it is skipped and costs
+    nothing. This is the single-mode path, used by demo_dash_yolox.py - the
+    three-mode runner has its own copy in modes.py because it shares one OCR
+    pass between modes 1 and 2.
 
     progress_cb(index, total, stage_name) fires after each STAGE rather than
     each image: 20 images x 3 stages with an uneven cost distribution makes a
@@ -43,6 +49,7 @@ def run_pipeline(image_paths: Iterable, question_id: str, cfg,
     from .stage1_quality import (annotate_for_gallery, build_quality_config,
                                  preload_segmenter, score_image)
     from .stage2_detect import get_detector
+    from . import stage2b_ocr
     from .stage3_vlm import VLMClient
     from quality_check import load_image_bgr
 
@@ -55,6 +62,9 @@ def run_pipeline(image_paths: Iterable, question_id: str, cfg,
     run_dir = cfg.run_dir
     (run_dir / "quality").mkdir(parents=True, exist_ok=True)
     (run_dir / "detection").mkdir(parents=True, exist_ok=True)
+    uses_ocr = question.ocr.enabled
+    if uses_ocr:
+        (run_dir / "ocr").mkdir(parents=True, exist_ok=True)
 
     def report(i: int, stage: str) -> None:
         if progress_cb:
@@ -62,6 +72,9 @@ def run_pipeline(image_paths: Iterable, question_id: str, cfg,
 
     report(0, "loading the segmenter")
     preload_segmenter(cfg)
+    if uses_ocr:
+        report(0, "loading the OCR engine")
+        stage2b_ocr.preload(cfg)
     quality_config = build_quality_config(cfg)
     detector = get_detector(cfg, question=question)
 
@@ -112,9 +125,19 @@ def run_pipeline(image_paths: Iterable, question_id: str, cfg,
             render(image_bgr, detection, run_dir / "detection" / f"{stem}.jpg")
         record.detection = detection
 
-        report(index, f"asking the model {index}/{total}")
         relevant = select_relevant(detection.detections, question)
-        record.vlm = client.ask(image_bgr, question, relevant)
+
+        if uses_ocr:
+            report(index, f"reading text {index}/{total}")
+            record.ocr = stage2b_ocr.run(
+                image_bgr, question, relevant, cfg=cfg,
+                dest_path=run_dir / "ocr" / f"{stem}.jpg")
+        else:
+            record.ocr = stage2b_ocr.skipped("this question does not use OCR")
+
+        report(index, f"asking the model {index}/{total}")
+        record.vlm = client.ask(image_bgr, question, relevant,
+                                ocr_result=record.ocr)
         record.stopped_at = STOPPED_COMPLETE
         record.extra["elapsed_s"] = round(time.time() - record_started, 2)
         records.append(record)

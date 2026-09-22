@@ -14,6 +14,14 @@ batch_runs/
 models/*.onnx
 !models/u2netp.onnx
 
+# The PP-OCRv6 ONNX files, committed for the same reason and with more force:
+# RapidOCR's response to a missing model file is to DOWNLOAD one, so on an
+# offline demo host an absent file is a hang rather than an error. These are the
+# same files handed to the Android team, so what the demo reads is what the edge
+# device reads. ~6 MB for the pair. See models/ocr/README.md.
+!models/ocr/
+!models/ocr/*.onnx
+
 # The YOLOX checkpoint - ~70MB, copied from AISERVER per COPY_FROM_AISERVER.md,
 # not source. Note this pattern is anchored with a leading slash: an unanchored
 # "models/" is what silently swallowed src/YOLOX/yolox/models in the field-ops

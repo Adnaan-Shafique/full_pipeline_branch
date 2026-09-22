@@ -12,11 +12,18 @@
 
     MODE_VLM_ONLY everything by the model
                   One call returns quality, subject presence and the inspection
-                  answer. No u2netp, no YOLOX.
+                  answer. No u2netp, no YOLOX, AND NO OCR - on the questions
+                  that carry an OCR stage the model reads the text itself, which
+                  is what makes the comparison with modes 1 and 2 worth running.
+
+Stage 2b, OCR, sits between detection and the model for the questions whose
+YAML sets `ocr.enabled: true`. Modes 1 and 2 share one OCR pass exactly as they
+share the detection pass. Mode 3 skips it entirely - see above.
 
 WORK IS SHARED, NOT REPEATED. Running all three naively would cost three model
 calls and two quality passes per image. Instead each image is loaded once,
-scored once and detected once; modes 1 and 2 read the same results and differ
+scored once, detected once and OCR'd once; modes 1 and 2 read the same results
+and differ
 only in what they do with them. And when both gates agree to proceed, the
 inputs to the model are identical, so the answer is computed once and reused -
 which is the common case. Typical cost is two model calls per image, not three.
@@ -76,6 +83,7 @@ def run_all_modes(image_paths, question_id: str, cfg,
     from .stage1_quality import (annotate_for_gallery, build_quality_config,
                                  preload_segmenter, score_image)
     from .stage2_detect import get_detector, render as render_detection
+    from . import stage2b_ocr
     from .stage3_vlm import VLMClient
     from quality_check import load_image_bgr
 
@@ -88,6 +96,9 @@ def run_all_modes(image_paths, question_id: str, cfg,
     run_dir = cfg.run_dir
     (run_dir / "quality").mkdir(parents=True, exist_ok=True)
     (run_dir / "detection").mkdir(parents=True, exist_ok=True)
+    uses_ocr = question.ocr.enabled
+    if uses_ocr:
+        (run_dir / "ocr").mkdir(parents=True, exist_ok=True)
 
     def report(i: int, stage: str) -> None:
         if progress_cb:
@@ -95,6 +106,11 @@ def run_all_modes(image_paths, question_id: str, cfg,
 
     report(0, "loading the segmenter")
     preload_segmenter(cfg)
+    if uses_ocr:
+        # Same reason as preload_segmenter: the one-off engine load belongs
+        # before the first photograph, not in the middle of the first card.
+        report(0, "loading the OCR engine")
+        stage2b_ocr.preload(cfg)
     quality_config = build_quality_config(cfg)
     detector = get_detector(cfg, question=question)
     client = VLMClient(cfg)
@@ -133,6 +149,18 @@ def run_all_modes(image_paths, question_id: str, cfg,
         or_proceeds = (quality.passed or bool(detection.detections)
                        or cfg.run_downstream_on_fail)
 
+        # ── Shared: one OCR pass ─────────────────────────────────────────────
+        # Runs on the RELEVANT detections, not every box: reading a warning sign
+        # that happens to be in the frame would put its text into a prompt about
+        # an SPD label. Skipped entirely unless at least one of the two modes is
+        # going to ask the model something - OCR on a photograph neither mode
+        # will use is seconds spent on nothing.
+        ocr = stage2b_ocr.skipped("this question does not use OCR")
+        if uses_ocr and (classic_proceeds or or_proceeds):
+            report(index, f"reading text {index}/{total}")
+            ocr = stage2b_ocr.run(image_bgr, question, relevant, cfg=cfg,
+                                  dest_path=run_dir / "ocr" / f"{stem}.jpg")
+
         # ── Modes 1 and 2 ────────────────────────────────────────────────────
         # When both gates open, the model sees identical inputs, so the answer
         # is computed once and shared. Only a photo that mode 1 stops and mode 2
@@ -140,20 +168,22 @@ def run_all_modes(image_paths, question_id: str, cfg,
         answer = None
         if classic_proceeds or or_proceeds:
             report(index, f"asking the model {index}/{total}")
-            answer = client.ask(image_bgr, question, relevant)
+            answer = client.ask(image_bgr, question, relevant, ocr_result=ocr)
 
         results[MODE_CLASSIC].append(_record(
             path, stem, question_id, quality,
             detection if classic_proceeds else None,
             answer if classic_proceeds else None,
-            STOPPED_COMPLETE if classic_proceeds else STOPPED_QUALITY, started))
+            STOPPED_COMPLETE if classic_proceeds else STOPPED_QUALITY, started,
+            ocr=ocr if classic_proceeds else None))
 
         results[MODE_OR_GATE].append(_record(
             path, stem, question_id, quality,
             detection if or_proceeds else None,
             answer if or_proceeds else None,
             STOPPED_COMPLETE if or_proceeds else STOPPED_QUALITY, started,
-            extra={"gate": _or_gate_reason(quality, detection)}))
+            extra={"gate": _or_gate_reason(quality, detection)},
+            ocr=ocr if or_proceeds else None))
 
         # ── Mode 3 ───────────────────────────────────────────────────────────
         report(index, f"model-only pass {index}/{total}")
@@ -189,11 +219,11 @@ def _or_gate_reason(quality: QualityStageResult,
 
 
 def _record(path, stem, question_id, quality, detection, vlm, stopped, started,
-            extra=None) -> PipelineRecord:
+            extra=None, ocr=None) -> PipelineRecord:
     record = PipelineRecord(
         filename=path.name, source_path=str(path), stem=stem,
-        question_id=question_id, quality=quality, detection=detection, vlm=vlm,
-        stopped_at=stopped)
+        question_id=question_id, quality=quality, detection=detection, ocr=ocr,
+        vlm=vlm, stopped_at=stopped)
     record.extra.update(extra or {})
     record.extra["elapsed_s"] = round(time.time() - started, 2)
     return record
@@ -241,6 +271,13 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
         is_stub=False, note="", presence=combined["subject_present"],
         presence_reasoning=combined.get("subject_reasoning", ""))
 
+    # Stated explicitly rather than left as None. Mode 3 not running OCR is a
+    # deliberate property of the mode - the model read whatever text is in the
+    # photograph itself - and the card says so where the other two modes show
+    # what PP-OCRv6 read. A blank panel would read as "OCR found nothing".
+    from .stage2b_ocr import skipped as _ocr_skipped
+    ocr = _ocr_skipped("mode 3 runs no OCR - the model read the image itself")
+
     vlm = VLMAnswer(
         answer=combined["answer"], reasoning=combined["reasoning"],
         raw_text=combined.get("raw_text", ""), model=combined["model"],
@@ -250,7 +287,8 @@ def _vlm_only_record(path, stem, question_id, combined, classical_quality,
     return _record(path, stem, question_id, quality, detection, vlm,
                    STOPPED_COMPLETE, started,
                    extra={"quality_reasoning": combined.get("quality_reasoning", ""),
-                          "legs": combined.get("legs", {})})
+                          "legs": combined.get("legs", {})},
+                   ocr=ocr)
 
 
 def _unreadable(path, stem, question_id, error) -> PipelineRecord:

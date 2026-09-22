@@ -534,9 +534,17 @@ class VLMClient:
             return None, self._describe(exc)
 
     # ── The question ─────────────────────────────────────────────────────────
-    def ask(self, image_bgr, question, detections: Optional[Iterable] = None) -> VLMAnswer:
+    def ask(self, image_bgr, question, detections: Optional[Iterable] = None,
+            ocr_result=None) -> VLMAnswer:
         """Answer one question about one image. Never raises: a failure becomes a
-        mock answer carrying the error, so one bad image cannot end the batch."""
+        mock answer carrying the error, so one bad image cannot end the batch.
+
+        `ocr_result` is stage 2b's OCRStageResult for the questions that use it,
+        and None everywhere else - including for every mode 3 call, which goes
+        through ask_vlm_only() and never sees an OCR block by design. An
+        OCRStageResult that errored or read nothing renders as no block at all,
+        so passing one in is always safe.
+        """
         model = self.cfg.vlm_model
         if self.cfg.vlm_mode == VLM_MODE_MOCK:
             return mock_answer(question, model, error=None)
@@ -547,7 +555,7 @@ class VLMClient:
                                error=f"registry unavailable: {error}")
 
         relevant = select_relevant(detections or [], question)
-        prompt = render_user_prompt(question, relevant)
+        prompt = render_user_prompt(question, relevant, ocr_result)
         sampling = sampling_for(question, self.cfg)
 
         try:

@@ -29,6 +29,7 @@ ERROR = "ERROR"
 # PipelineRecord.stopped_at values.
 STOPPED_QUALITY = "quality"
 STOPPED_DETECTION = "detection"
+STOPPED_OCR = "ocr"
 STOPPED_VLM = "vlm"
 STOPPED_COMPLETE = "complete"
 
@@ -161,6 +162,94 @@ class DetectionStageResult:
         return max(self.detections, key=lambda d: d.confidence, default=None)
 
 
+# OCRStageResult.scope_used values. Which one it is decides how the boxes in
+# `lines` should be read: box-scoped coordinates are in the FULL frame (the
+# stage translates them back), image-scoped ones already are.
+OCR_FROM_BOXES = "boxes"
+OCR_FROM_IMAGE = "image"
+OCR_SKIPPED = "skipped"
+
+
+@dataclass
+class OCRLine:
+    """One recognised line of text, in the same EXIF-corrected frame every other
+    stage sees - the load-once contract applies to OCR as much as to detection.
+
+    `polygon` is the text detector's own quadrilateral, which is not
+    axis-aligned on angled labels; `box` is its bounding rectangle. Both are in
+    FULL-FRAME pixels even when the read came from a crop, because a card that
+    draws them has only the full frame to draw on.
+    """
+
+    text: str
+    text_confidence: float
+    box: list           # x1, y1, x2, y2 absolute px in the full frame
+    polygon: list = field(default_factory=list)
+    # Which detection this line was read out of, when the read was box-scoped.
+    # None for a whole-frame read. Shown on the card so an operator can tell
+    # "read off the SPD label" from "read off something else in the photo".
+    from_label: Optional[str] = None
+
+
+@dataclass
+class OCRStageResult:
+    """Stage 2b output. Runs between detection and the model, for the questions
+    whose YAML sets `ocr.enabled: true` - and never in mode 3, where the model
+    reads the text itself.
+
+    `error` is set when OCR could not run at all (no models, rapidocr missing,
+    the engine raised). It is NOT set when OCR ran and found no text: that is a
+    successful read of a photograph with nothing legible in it, and the two must
+    stay distinguishable, because only the first is a problem with the demo host.
+    """
+
+    lines: list                      # list[OCRLine], reading order
+    engine: str                      # e.g. "PP-OCRv6 tiny (no angle classifier...)"
+    scope_used: str = OCR_SKIPPED    # OCR_FROM_BOXES | OCR_FROM_IMAGE | OCR_SKIPPED
+    elapsed_ms: float = 0.0
+    boxes_read: int = 0              # how many detections were cropped and read
+    annotated_path: Optional[str] = None   # magenta line boxes, for the UI
+    note: str = ""                   # e.g. "no detections; read the whole frame"
+    error: Optional[str] = None
+    # The numeric rule's output, when the question carries one AND a number was
+    # matched. Shape: {"value", "passes", "matched", "sentence"}. None means no
+    # rule, or a rule that matched nothing - never a failed check. See
+    # question_types.NumericRule.
+    numeric: Optional[dict] = None
+
+    @property
+    def ran(self) -> bool:
+        return self.scope_used != OCR_SKIPPED and not self.error
+
+    @property
+    def text(self) -> str:
+        """Every line joined in reading order - what the numeric rule is run
+        over and what the card shows as one block."""
+        return " ".join(ln.text.strip() for ln in self.lines if (ln.text or "").strip())
+
+    @property
+    def mean_confidence(self) -> float:
+        scores = [ln.text_confidence for ln in self.lines]
+        return sum(scores) / len(scores) if scores else 0.0
+
+    @property
+    def headline(self) -> str:
+        """One line for the UI card, honest about the three different nothings:
+        an OCR stage that could not run, one that ran and read nothing, and one
+        that was never asked to run for this question."""
+        if self.error:
+            return f"{ERROR} - {self.error}"
+        if self.scope_used == OCR_SKIPPED:
+            return "not run for this question"
+        where = ("whole frame" if self.scope_used == OCR_FROM_IMAGE
+                 else f"{self.boxes_read} detected box{'es' if self.boxes_read != 1 else ''}")
+        if not self.lines:
+            return f"no legible text found ({where}, {self.elapsed_ms:.0f} ms)"
+        return (f"{len(self.lines)} line{'s' if len(self.lines) != 1 else ''} read "
+                f"from the {where}, mean confidence {self.mean_confidence:.2f} "
+                f"({self.elapsed_ms:.0f} ms)")
+
+
 @dataclass
 class VLMAnswer:
     """Stage 3 output. `answer` is always one of yes / no / unknown - the parser
@@ -203,6 +292,7 @@ class PipelineRecord:
     question_id: str
     quality: QualityStageResult
     detection: Optional[DetectionStageResult] = None
+    ocr: Optional[OCRStageResult] = None
     vlm: Optional[VLMAnswer] = None
     stopped_at: str = STOPPED_COMPLETE
     extra: dict[str, Any] = field(default_factory=dict)
@@ -216,6 +306,7 @@ class PipelineRecord:
         """
         q = self.quality
         d = self.detection
+        o = self.ocr
         v = self.vlm
         return {
             "filename": self.filename,
@@ -236,6 +327,19 @@ class PipelineRecord:
             "detection_source": (d.model_name if d else ""),
             "detections": "; ".join(f"{x.label}:{x.confidence:.2f}" for x in d.detections) if d else "",
             "detection_note": (d.note if d else ""),
+            "ocr_engine": (o.engine if o and o.ran else ""),
+            "ocr_scope": (o.scope_used if o else ""),
+            "ocr_text": (o.text if o else ""),
+            "ocr_confidence": (round(o.mean_confidence, 3) if o and o.lines else None),
+            "ocr_lines": (len(o.lines) if o else 0),
+            "ocr_elapsed_ms": (round(o.elapsed_ms, 1) if o else None),
+            # The rule's reading and verdict, kept as separate columns so a
+            # spreadsheet can sort on the number. Blank when no rule matched -
+            # which is not the same as a failed check, and must not be read as
+            # one, so ocr_numeric_passes stays None rather than False.
+            "ocr_numeric_value": (o.numeric["value"] if o and o.numeric else None),
+            "ocr_numeric_passes": (o.numeric["passes"] if o and o.numeric else None),
+            "ocr_error": ((o.error or "") if o else ""),
             "vlm_answer": (v.answer if v else ""),
             "vlm_reasoning": (v.reasoning if v else ""),
             "vlm_model": (v.provenance if v else ""),
@@ -253,6 +357,8 @@ FLAT_ROW_COLUMNS = [
     "whole_frame_score", "foreground_score", "segmentation_used",
     "failure_reasons", "retake_instructions",
     "detection_source", "detections", "detection_note",
+    "ocr_engine", "ocr_scope", "ocr_text", "ocr_confidence", "ocr_lines",
+    "ocr_elapsed_ms", "ocr_numeric_value", "ocr_numeric_passes", "ocr_error",
     "vlm_answer", "vlm_reasoning", "vlm_model", "vlm_elapsed_s", "vlm_error",
     "stopped_at", "source_path",
 ]
