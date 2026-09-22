@@ -3,22 +3,22 @@
 ## `dash-ui-v1` — annotation-file detector
 
 **Commit:** `f978b7df790f312a096977a4bd103b9c66f13948`
-**Files:** `app/demo_dash.py`, `app/assets/demo.css`
+**Files:** `frontend/demo_dash.py`, `frontend/assets/demo.css`
 **Detector:** `use_model=False` — human annotation `.txt` sidecars
 **Tests:** 229 assertions across six suites
 
 The demo-ready state, verified end to end on FALCONPRD against the live GPU
-server. Do not change `app/demo_dash.py` — the YOLOX version is a separate
+server. Do not change `frontend/demo_dash.py` — the YOLOX version is a separate
 file so this one stays runnable as a fallback.
 
-`app/assets/demo.css` has since gained a `.dropzone` / `.or-rule` block for the
+`frontend/assets/demo.css` has since gained a `.dropzone` / `.or-rule` block for the
 YOLOX UI's upload control. That change is **additive only** — no existing
 selector was modified — so `demo_dash.py` renders exactly as it did at this
 commit.
 
 Restore with:
 
-    git checkout f978b7df790f312a096977a4bd103b9c66f13948 -- app/demo_dash.py app/assets/demo.css
+    git checkout f978b7df790f312a096977a4bd103b9c66f13948 -- frontend/demo_dash.py frontend/assets/demo.css
 
 A local git tag `dash-ui-v1` also marks this commit. It is not on the remote:
 this environment's proxy rejects tag pushes with HTTP 403, and pushing a

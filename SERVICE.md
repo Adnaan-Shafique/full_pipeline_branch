@@ -5,8 +5,8 @@ Templates live in `deploy/`.
 
 | Unit | App | Port | What it is |
 |---|---|---|---|
-| `fieldops-demo-modes.service` | `app/demo_dash_modes.py` | 7872 | three modes over a folder of photographs |
-| `fieldops-demo-pipeline.service` | `app/demo_dash_pipeline.py` | 7873 | domain → question → one photograph → three modes |
+| `fieldops-demo-modes.service` | `frontend/demo_dash_modes.py` | 7872 | three modes over a folder of photographs |
+| `fieldops-demo-pipeline.service` | `frontend/demo_dash_pipeline.py` | 7873 | domain → question → one photograph → three modes |
 
 They are independent and can run together — different ports, no shared state
 beyond the read-only `config/` tree and `demo_runs/`. Everything below is
@@ -141,7 +141,7 @@ in the log — for a demo on a closed network in front of a known audience it is
 the right trade: no extra dependency, no extra failure mode, and it is threaded,
 so a slow pipeline run does not block the page.
 
-If this ever outlives the demo, `app/demo_dash_modes.py` already exposes
+If this ever outlives the demo, `frontend/demo_dash_modes.py` already exposes
 `server = app.server`, so the move is one line:
 
 ```

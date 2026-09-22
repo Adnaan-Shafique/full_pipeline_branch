@@ -2,7 +2,7 @@
 
 Two versions now exist. They differ in **one leg**:
 
-| | `app/demo_dash.py` | `app/demo_dash_yolox.py` |
+| | `frontend/demo_dash.py` | `frontend/demo_dash_yolox.py` |
 |---|---|---|
 | Port | 7870 | 7871 |
 | Stage 2 | human annotation `.txt` sidecars | trained YOLOX-S checkpoint |
@@ -15,14 +15,14 @@ Different ports on purpose — run both, show either.
 
 ## 1. Copy in the missing YOLOX network definition
 
-`app/vendor/yolox/` has the utils. **`yolox/models/` is missing** and has to
+`backend/vendor/yolox/` has the utils. **`yolox/models/` is missing** and has to
 come from a working checkout:
 
 ```bash
-rm -rf app/vendor/yolox/models   # scp nests if the target already exists
+rm -rf backend/vendor/yolox/models   # scp nests if the target already exists
 scp -r admin@10.66.98.137:/data01/sds_field/Field_Ops/src/YOLOX/yolox/models \
-    app/vendor/yolox/models
-rm -rf app/vendor/yolox/models/__pycache__
+    backend/vendor/yolox/models
+rm -rf backend/vendor/yolox/models/__pycache__
 ```
 
 The source and the checkpoint live on AISERVER (10.66.98.137); the demo runs on
@@ -80,7 +80,7 @@ check.
 ## 5. Run it
 
 ```bash
-python app/demo_dash_yolox.py        # http://<host>:7871
+python frontend/demo_dash_yolox.py        # http://<host>:7871
 ```
 
 Paste the checkpoint path into the Detector card, press **Load / check model**,

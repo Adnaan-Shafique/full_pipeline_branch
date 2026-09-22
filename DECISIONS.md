@@ -8,6 +8,66 @@ Newest first. Dates are when the decision was made, not when it was written up.
 
 ---
 
+## 2026-09-23 · backend/ and frontend/, with the arrow pointing one way
+
+**Decision.** `app/` becomes `backend/` (pipeline, vendored modules, YOLOX
+utils) and `frontend/` (the four Dash UIs, the stylesheet). `frontend/` imports
+`backend/`; nothing under `backend/` imports anything from `frontend/`. No
+compatibility shims at the old paths.
+
+**Why.** The pipeline was already the importable part and the UIs already the
+leaves, but nothing enforced it and the layout did not say so. The property
+worth protecting is that the whole pipeline runs on a machine with no Dash
+installed — that is how most of the test suite runs, how the smoke tools run,
+and how anyone porting this to the edge device will consume it. A backend
+module importing a renderer would break that silently: it would only fail on
+the machine that has no dash, which is the machine that matters.
+
+**Why not `src/`.** Every `__file__`-derived path in the repo assumes a fixed
+depth below the project root — `config.py`'s `parents[2]`, `registry.py`,
+`ocr_engine.py`, and `foreground_segmentation.py`'s `parent.parent`, which is
+what makes `models/` resolve and what `SETUP.md` warns about. `backend/` and
+`frontend/` sit exactly where `app/` sat, so the move needed no arithmetic
+changes at all. A `src/` above them would have required re-deriving every one,
+for a tidier root.
+
+**What it costs.** Anything scripted against `app/` outside this repository
+breaks once. Shims were considered and rejected: two paths to every file is a
+worse long-term cost than one update, and a shim that nobody removes becomes
+the layout. The guard against the arrow reversing lives in `test_phase1.py` and
+parses imports rather than grepping — the grep version failed on a docstring
+that merely names a UI, which is documentation and should stay.
+
+---
+
+## 2026-09-23 · Mode 3's overlay is a view control, rendered ahead of time
+
+**Decision.** Mode 3's claimed boxes can be shown as box + label, box only, or
+off. All three renderings are written during the run; the UI control picks a
+file rather than redrawing.
+
+**Why.** The caption is long — "model says: a temperature display or device
+reading (IoU 0.62 vs detector)" — and on a tight box around a small object it
+covers the object. On a device reading that is the digits, which is the one
+thing the box exists to point at.
+
+Rendering ahead of time rather than on the callback is the part worth
+recording. Redrawing would mean either holding every decoded photograph in
+memory for the session, or re-reading it from disk — and re-reading is exactly
+what the "arrays, never paths" rule exists to prevent, because the re-read
+frame is not EXIF-corrected and the boxes would land wrong. Three JPEGs per
+photograph is the cheaper and safer trade, and it makes the control free:
+switching never costs a model call, which is why it sits with the mode selector
+rather than among the settings that do force a re-run.
+
+**What it costs.** Two extra files per photograph that has a claim, and a
+`demo_runs/` folder that grows faster. A failed variant render now has to be
+distinguished from a record that predates the feature — falling back to the
+plain photograph in both cases would show an image with no boxes beside a card
+listing a claim, which reads as "the model claimed nothing".
+
+---
+
 ## 2026-09-23 · Mode 3 draws boxes after all, scored against the detector
 
 **Decision.** Reverses "mode 3 draws no bounding boxes". The presence and
@@ -79,8 +139,8 @@ the convention is printed, so a human can see it.
 ## 2026-09-22 · The questions are YAML, and the loader never raises
 
 **Decision.** Questions, domains and object classes move out of
-`app/pipeline/questions.py` into `config/domains.yaml`, `config/classes.yaml`
-and `config/questions/*.yaml`, read by `app/pipeline/registry.py`. Every
+`backend/pipeline/questions.py` into `config/domains.yaml`, `config/classes.yaml`
+and `config/questions/*.yaml`, read by `backend/pipeline/registry.py`. Every
 problem the loader can survive becomes a warning the UI prints, and the entry
 that caused it is dropped. `questions.py` stays as the import surface, so every
 existing `from pipeline.questions import ...` still resolves.

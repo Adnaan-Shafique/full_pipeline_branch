@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# app/pipeline/yolox_runtime.py -> app/vendor, where the YOLOX package lives.
+# backend/pipeline/yolox_runtime.py -> backend/vendor, where YOLOX lives.
 _VENDOR = Path(__file__).resolve().parents[1] / "vendor"
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
@@ -86,14 +86,14 @@ def build_model(num_classes: int, depth: float = YOLOX_S_DEPTH,
     except ImportError as exc:
         raise ImportError(
             f"The YOLOX network definition is not available: {exc}\n\n"
-            f"app/vendor/yolox/models/ is missing. It is absent from the field-ops "
+            f"backend/vendor/yolox/models/ is missing. It is absent from the field-ops "
             f"repo because that repo's root .gitignore contains a bare 'models/' "
             f"pattern, which git applies at ANY depth - so it excludes "
             f"src/YOLOX/yolox/models/ along with the checkpoint folder it was "
             f"meant for.\n\n"
             f"Copy it from a working checkout:\n"
             f"  cp -r <field-ops>/src/YOLOX/yolox/models {_VENDOR}/yolox/models\n\n"
-            f"See app/vendor/README.md."
+            f"See backend/vendor/README.md."
         ) from exc
 
     backbone = YOLOPAFPN(depth, width, in_channels=IN_CHANNELS, act=act)

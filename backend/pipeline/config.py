@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# app/pipeline/config.py -> app/pipeline -> app -> <project root>
+# backend/pipeline/config.py -> backend/pipeline -> backend -> <project root>
 _THIS = Path(__file__).resolve()
 DEFAULT_PROJECT_ROOT = _THIS.parents[2]
 

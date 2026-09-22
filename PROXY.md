@@ -105,8 +105,8 @@ model carrying an image cap is treated as a vision model — in `llm_proxy_v3`'s
 
 | Path | Role |
 |---|---|
-| `app/pipeline/config.py` | `vlm_transport`, `vlm_api_key`, the env overrides, the `validate()` guards |
-| `app/pipeline/stage3_vlm.py` | `ENDPOINTS`, `auth_headers()`, the per-status help, the registry fallback |
+| `backend/pipeline/config.py` | `vlm_transport`, `vlm_api_key`, the env overrides, the `validate()` guards |
+| `backend/pipeline/stage3_vlm.py` | `ENDPOINTS`, `auth_headers()`, the per-status help, the registry fallback |
 | `tools/preflight.py` | `--transport` / `--api-key` |
 | `tools/smoke_stage3.py` | same two flags |
 | `tests/test_transport.py` | 53 assertions |

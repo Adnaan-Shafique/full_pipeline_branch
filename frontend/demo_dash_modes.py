@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field Ops integrated demo - Dash UI, THREE PIPELINE MODES.
 
-    python app/demo_dash_modes.py       ->  http://<host>:7872
+    python frontend/demo_dash_modes.py       ->  http://<host>:7872
 
     1  Quality gate -> Detector -> Model     (the pipeline as built)
     2  (Quality OR Detector) -> Model        (a failed quality score is not
@@ -15,8 +15,8 @@ switches between the three sets of results with no re-running. That comparison
 is the point: the same photograph, three ways of deciding about it, side by
 side.
 
-Siblings, all runnable at once on their own ports: app/demo_dash.py on 7870
-(annotation detector, frozen - see FROZEN.md) and app/demo_dash_yolox.py on
+Siblings, all runnable at once on their own ports: frontend/demo_dash.py on 7870
+(annotation detector, frozen - see FROZEN.md) and frontend/demo_dash_yolox.py on
 7871 (single-mode YOLOX).
 
 The card, tile and summary renderers are IMPORTED from demo_dash rather than
@@ -36,8 +36,15 @@ import sys
 import traceback
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(APP_DIR))
+# frontend/<this file> -> frontend -> <project root>. The UI imports the
+# pipeline as a library, so the backend package directory goes on the path
+# explicitly; nothing under backend/ imports anything from frontend/, and that
+# one-way arrow is the whole point of the split.
+UI_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = UI_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(UI_DIR))
 
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update  # noqa: E402
 
@@ -58,7 +65,7 @@ from pipeline.schemas import STOPPED_QUALITY  # noqa: E402
 # Shared renderers. vlm_column is reused verbatim so all three modes look
 # identical; quality_column and detection_column are re-implemented below
 # because mode 3 judges quality in words and reports subject PRESENCE rather
-# than boxes, and app/demo_dash.py is frozen (see FROZEN.md) so it cannot grow
+# than boxes, and frontend/demo_dash.py is frozen (see FROZEN.md) so it cannot grow
 # those cases. classical_quality_column is the frozen renderer, still used for
 # modes 1 and 2.
 from demo_dash import (FONTS, QUESTION_OPTIONS, FIRST,  # noqa: E402
@@ -354,7 +361,7 @@ def layout():
 
 app = Dash(__name__, external_stylesheets=FONT_SHEET,
            title="Field Ops Demo — Modes", update_title="Running…",
-           assets_folder=str(APP_DIR / "assets"), suppress_callback_exceptions=True)
+           assets_folder=str(UI_DIR / "assets"), suppress_callback_exceptions=True)
 app.layout = layout()
 server = app.server
 

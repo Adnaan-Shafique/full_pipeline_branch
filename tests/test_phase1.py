@@ -7,7 +7,7 @@ Run: python tests/test_phase1.py
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from pipeline import config as pcfg
 from pipeline import questions as pq
@@ -76,6 +76,54 @@ check("empty stub result still reports is_stub", stub.is_stub is True)
 check("real result reports is_stub False", real.is_stub is False)
 check("top() returns the highest-confidence detection", real.top().label == "gps_antenna")
 check("top() on empty returns None", stub.top() is None)
+
+print("\nthe frontend/backend split: the arrow points one way")
+import re as _re  # noqa: E402
+
+_BACKEND = Path(__file__).resolve().parents[1] / "backend"
+_FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
+check("backend/ and frontend/ both exist", _BACKEND.is_dir() and _FRONTEND.is_dir())
+# The point of the split is that the pipeline runs with no UI installed. A
+# backend module importing a renderer would break that silently - it would only
+# fail on the machine that has no dash, which is the machine that matters.
+# Parsed, not grepped: a docstring that NAMES a UI ("used by demo_dash_yolox")
+# is documentation and welcome. Only a real import breaks the split, and the
+# first version of this check failed on the docstring.
+import ast as _ast  # noqa: E402
+
+_BANNED = {"dash", "gradio", "frontend", "demo_dash", "demo_dash_modes",
+           "demo_dash_pipeline", "demo_dash_yolox", "demo_app"}
+_offenders = []
+for _path in sorted(_BACKEND.rglob("*.py")):
+    if "vendor" in _path.parts:
+        continue          # vendored YOLOX is not ours to police
+    try:
+        _tree = _ast.parse(_path.read_text(errors="replace"))
+    except SyntaxError:
+        continue
+    for _node in _ast.walk(_tree):
+        if isinstance(_node, _ast.Import):
+            _names = [a.name.split(".")[0] for a in _node.names]
+        elif isinstance(_node, _ast.ImportFrom):
+            _names = [(_node.module or "").split(".")[0]]
+        else:
+            continue
+        for _name in _names:
+            if _name in _BANNED:
+                _offenders.append(f"{_path.name}:{_node.lineno} imports {_name}")
+check("no backend module imports the UI, or dash, or gradio",
+      not _offenders, "; ".join(_offenders))
+# And every UI must put backend/ on the path itself, or it only runs from the
+# repo root by luck.
+for _ui in sorted(_FRONTEND.glob("demo_*.py")):
+    _body = _ui.read_text()
+    check(f"{_ui.name} puts backend/ on sys.path itself",
+          "BACKEND_DIR" in _body and "sys.path.insert" in _body, _ui.name)
+# Depth is what makes every __file__-derived path resolve. If backend/ ever
+# moves under another folder, config.py's parents[2] silently points one level
+# too high and models/ and config/ resolve to nothing.
+check("backend/ sits exactly one level below the project root",
+      _BACKEND.parent == Path(__file__).resolve().parents[1])
 
 print("\nquestions - every question carries a non-empty system prompt (trap 9)")
 # The registry is loaded from config/questions/*.yaml and grows as questions are
@@ -159,7 +207,7 @@ check("no detections stays empty", pq.select_relevant([], pq.QUESTIONS["gps_ante
 print("\nconfig - one explicit root, and server-side validation mirrored")
 cfg = pcfg.default_config()
 check("project_root resolves to the repo root",
-      (cfg.project_root / "app" / "pipeline" / "config.py").exists(), str(cfg.project_root))
+      (cfg.project_root / "backend" / "pipeline" / "config.py").exists(), str(cfg.project_root))
 check("annotation_dir defaults under the root", cfg.annotation_dir == cfg.project_root / "data" / "labels")
 check("models_dir agrees with foreground_segmentation's U2NET_HOME target",
       cfg.models_dir == cfg.project_root / "models")

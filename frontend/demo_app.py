@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field Ops integrated demo - one page driving all three legs.
 
-    python app/demo_app.py                      -> http://<host>:7870
+    python frontend/demo_app.py                      -> http://<host>:7870
 
 Port 7870 deliberately: 8056 (batch_ui), 8050 (Dash detection), 7860 (VLM
 client) and 7861 (review_ui) stay free so any of those can run alongside as a
@@ -19,8 +19,15 @@ import sys
 import traceback
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(APP_DIR))
+# frontend/<this file> -> frontend -> <project root>. The UI imports the
+# pipeline as a library, so the backend package directory goes on the path
+# explicitly; nothing under backend/ imports anything from frontend/, and that
+# one-way arrow is the whole point of the split.
+UI_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = UI_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(UI_DIR))
 
 import gradio as gr  # noqa: E402
 

@@ -1,4 +1,4 @@
-# Per-photograph field-ops demo UI (app/demo_dash_pipeline.py), port 7873.
+# Per-photograph field-ops demo UI (frontend/demo_dash_pipeline.py), port 7873.
 #
 # Install per SERVICE.md. Every path below assumes the field-ops VM layout:
 #   /data/adnaan/field_ops/integrated_pipeline
@@ -36,7 +36,7 @@ Environment=DASH_PORT=7873
 #Environment=FIELDOPS_CONFIG_DIR=/etc/fieldops/config
 
 ExecStart=/data/adnaan/field_ops/integrated_pipeline/venv_yolox/bin/python \
-          /data/adnaan/field_ops/integrated_pipeline/app/demo_dash_pipeline.py
+          /data/adnaan/field_ops/integrated_pipeline/frontend/demo_dash_pipeline.py
 
 Restart=always
 RestartSec=5

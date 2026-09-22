@@ -8,7 +8,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 from pipeline.config import default_config, VLM_MODE_MOCK, SEND_FULL_CROP  # noqa: E402

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field Ops integrated demo - DOMAIN, QUESTION, ONE PHOTOGRAPH, THREE MODES.
 
-    python app/demo_dash_pipeline.py    ->  http://<host>:7873
+    python frontend/demo_dash_pipeline.py    ->  http://<host>:7873
 
 Pick a domain, pick a question from that domain, drop a photograph, and see all
 three modes answer it side by side:
@@ -18,10 +18,10 @@ transcription handed to them. Where they disagree, the OCR panel and the
 model's reasoning say which one moved.
 
 Siblings, all runnable at once on their own ports:
-    app/demo_dash.py         7870  annotation detector, FROZEN (see FROZEN.md)
-    app/demo_dash_yolox.py   7871  single-mode YOLOX
-    app/demo_dash_modes.py   7872  three modes over a FOLDER of photographs
-    app/demo_dash_pipeline.py 7873  this one
+    frontend/demo_dash.py         7870  annotation detector, FROZEN (see FROZEN.md)
+    frontend/demo_dash_yolox.py   7871  single-mode YOLOX
+    frontend/demo_dash_modes.py   7872  three modes over a FOLDER of photographs
+    frontend/demo_dash_pipeline.py 7873  this one
 
 7872 is not superseded: it is the batch screen, and running twenty photographs
 to find the two that disagree is a different job from examining one. This screen
@@ -34,7 +34,7 @@ the audience learns to read the styling instead of the provenance banner, and a
 copy would drift.
 
 Questions, domains and detector classes all come from config/ via the registry -
-see app/pipeline/registry.py. Nothing about a question is hard-coded here, which
+see backend/pipeline/registry.py. Nothing about a question is hard-coded here, which
 is why the domain dropdown and the per-question panel below can be written once
 and stay correct as questions are added.
 """
@@ -46,8 +46,15 @@ import sys
 import traceback
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(APP_DIR))
+# frontend/<this file> -> frontend -> <project root>. The UI imports the
+# pipeline as a library, so the backend package directory goes on the path
+# explicitly; nothing under backend/ imports anything from frontend/, and that
+# one-way arrow is the whole point of the split.
+UI_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = UI_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(UI_DIR))
 
 from dash import Dash, Input, Output, State, dcc, html, no_update  # noqa: E402
 
@@ -566,7 +573,7 @@ def layout():
 
 app = Dash(__name__, external_stylesheets=FONTS,
            title="Field Ops — Domain · Question · 3 Modes", update_title="Running…",
-           assets_folder=str(APP_DIR / "assets"), suppress_callback_exceptions=True)
+           assets_folder=str(UI_DIR / "assets"), suppress_callback_exceptions=True)
 app.layout = layout()
 server = app.server
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field Ops integrated demo - Dash UI.
 
-    python app/demo_dash.py            ->  http://<host>:7870
+    python frontend/demo_dash.py            ->  http://<host>:7870
 
 Styled to Vodafone Idea Design System V.01 (DM Sans, #F4F1EC ground, white
 surfaces, red-to-yellow primary gradient). All of it lives in
@@ -22,8 +22,15 @@ import sys
 import traceback
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(APP_DIR))
+# frontend/<this file> -> frontend -> <project root>. The UI imports the
+# pipeline as a library, so the backend package directory goes on the path
+# explicitly; nothing under backend/ imports anything from frontend/, and that
+# one-way arrow is the whole point of the split.
+UI_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = UI_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(UI_DIR))
 
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update  # noqa: E402
 

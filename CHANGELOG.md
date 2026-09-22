@@ -11,6 +11,42 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v0.9 — Overlay control, and a frontend/backend split · 2026-09-23
+
+| Change |
+|---|
+| a three-way overlay control for mode 3's claimed boxes, switchable without re-running |
+| `app/` split into `backend/` (the pipeline) and `frontend/` (the four Dash UIs) |
+| `WALKTHROUGH.md` — how to read this repository |
+
+**The overlay control.** A claimed box's caption is long enough to cover the
+object it points at — on a device reading it sits over the digits, which
+defeats the point of pointing. The overlay is now box + label, box only, or
+off. All three renderings are written during the run, so switching is a
+re-render and never three more model calls; the control sits with the mode
+selector rather than in the sidebar, where everything forces a re-run. A render
+that *fails* is now distinguished from a record that predates the feature,
+because falling back to the plain photograph silently reads as "the model
+claimed nothing".
+
+**The split.** `backend/` holds the pipeline, `frontend/` the UIs, and the
+arrow points one way: nothing under `backend/` imports anything from
+`frontend/`. Verified by running the full pipeline — three modes, OCR included
+— from a script with `dash` and `gradio` hard-blocked at import. A parsed (not
+grepped) guard in `test_phase1.py` keeps it that way; grepping failed on a
+docstring that merely *names* a UI, which is documentation and welcome.
+
+`backend/` and `frontend/` sit at the same depth `app/` did, so every
+`__file__`-derived path — `config.py`'s `parents[2]`,
+`foreground_segmentation.py`'s `parent.parent` — resolves unchanged. That was
+the reason for choosing this layout over `src/`. No compatibility shims: the
+systemd units, tools, tests and every document moved in the same commit.
+
+**816 assertions, thirteen suites** (822 with every dependency installed, 645
+bare).
+
+---
+
 ## v0.8 — Mode 3 points at things · 2026-09-23
 
 | Commit | Change |
@@ -64,7 +100,7 @@ drawn" — replaced by assertions covering both the box and the no-box case.
 |---|---|
 | `3b4761a` | questions, domains and detector classes move from Python to `config/` |
 | `0a10ce0` | OCR added as stage 2b, between detection and the model |
-| `a5ac5df` | `app/demo_dash_pipeline.py` on port 7873; mode 3's OCR mis-framing fixed |
+| `a5ac5df` | `frontend/demo_dash_pipeline.py` on port 7873; mode 3's OCR mis-framing fixed |
 
 **Scope.** Two questions became sixteen, in two domains. The fourteen new ones
 are the site-infrastructure checklist: lightning arrestor, enclosure condition
@@ -73,10 +109,10 @@ rectifier modules, temperature sensor placement and reading, earth pit and
 earthing value, DCDB cable tagging.
 
 **The plugin layer.** `config/domains.yaml`, `config/classes.yaml` and
-`config/questions/*.yaml`, read by the new `app/pipeline/registry.py`. Adding
+`config/questions/*.yaml`, read by the new `backend/pipeline/registry.py`. Adding
 or removing a question, domain or object class is a YAML edit —
 `PLUGINS.md` is the procedure, and the **Reload config/** button on 7873 picks
-it up without a restart. `app/pipeline/questions.py` remains the import surface,
+it up without a restart. `backend/pipeline/questions.py` remains the import surface,
 so every existing import still resolves. `yolox_class_names` is now derived
 from the YAML's explicit `yolox_index` values.
 
@@ -93,7 +129,7 @@ exists to show. Running the app surfaced a real bug here — all four OCR
 questions were telling mode 3 that OCR text "may be supplied", which in that
 mode it never is. Questions now carry a `system_prompt_no_ocr` for that leg.
 
-**New UI.** `app/demo_dash_pipeline.py` on **7873**: domain → question → one
+**New UI.** `frontend/demo_dash_pipeline.py` on **7873**: domain → question → one
 photograph → all three modes side by side, with an OCR panel and a Prompts tab
 showing exactly what each mode sent. 7872 stays current as the batch screen;
 7870 stays frozen.
@@ -190,14 +226,14 @@ Moved the demo to `10.19.75.122`, which cannot reach the GPU server at all.
 | `477ba5e` | 09-15 | Open-source inventory |
 
 ### Added
-- `app/demo_dash_modes.py` on **port 7872** — mode 1 (quality gate → detector →
+- `frontend/demo_dash_modes.py` on **port 7872** — mode 1 (quality gate → detector →
   model), mode 2 (quality **OR** detector → model), mode 3 (everything by the
   model). One run fills all three; switching mode re-reads results rather than
   re-running. A Compare tab puts one row per photograph against one column per
   mode.
-- `app/pipeline/modes.py` — the shared-work runner. One quality pass, one
+- `backend/pipeline/modes.py` — the shared-work runner. One quality pass, one
   detection pass, one VLM answer when modes 1 and 2 both proceed.
-- `app/pipeline/prompts.py` — `PromptStore`, persisting mode-3 overrides to
+- `backend/pipeline/prompts.py` — `PromptStore`, persisting mode-3 overrides to
   `config/prompts.yaml`.
 - Mode 3 split into three calls with editable per-leg system prompts, a fixed
   user prompt shown read-only, and a "Re-run mode 3 only" button that reuses
@@ -225,11 +261,11 @@ Moved the demo to `10.19.75.122`, which cannot reach the GPU server at all.
 | `d613e80` | Checkpoint inspector |
 
 ### Added
-- `app/demo_dash_yolox.py` on **port 7871** — the trained YOLOX-S checkpoint in
+- `frontend/demo_dash_yolox.py` on **port 7871** — the trained YOLOX-S checkpoint in
   place of annotation sidecars.
-- `app/pipeline/yolox_runtime.py` — letterbox `preproc`, `build_model`,
+- `backend/pipeline/yolox_runtime.py` — letterbox `preproc`, `build_model`,
   `YoloxPredictor`, all mirroring the training exp.
-- `app/vendor/yolox/` — utils under Apache 2.0. `yolox/models/` is *not*
+- `backend/vendor/yolox/` — utils under Apache 2.0. `yolox/models/` is *not*
   tracked: the upstream repo's bare `models/` gitignore pattern excluded it.
 - `tools/inspect_ckpt.py` — reads class count, width and depth out of a
   checkpoint and says what they imply.
@@ -254,7 +290,7 @@ human annotations at 0.89–0.94 confidence.
 | `cf23a9a` | Record the `dash-ui-v1` freeze |
 | `f978b7d` | **Rebuild the UI in Dash, styled to Design System V.01** |
 
-`app/demo_dash.py` on **port 7870**, with `app/assets/demo.css`. Verified end
+`frontend/demo_dash.py` on **port 7870**, with `frontend/assets/demo.css`. Verified end
 to end on FALCONPRD against the live GPU server, and **frozen** at `f978b7d` as
 the known-good fallback — see `FROZEN.md`. Later versions are separate files.
 
@@ -281,7 +317,7 @@ reference.
 | `c4c7ee4` | Phase 1: schemas, config, question registry, quality stage |
 
 ### Added
-- `app/pipeline/` — `schemas.py` (stage contracts), `config.py`, `questions.py`
+- `backend/pipeline/` — `schemas.py` (stage contracts), `config.py`, `questions.py`
   (per-question system prompts and class names), the three stages, and
   `orchestrator.py`.
 - `tools/preflight.py` — checks a demo host before the demo, not a dev box.

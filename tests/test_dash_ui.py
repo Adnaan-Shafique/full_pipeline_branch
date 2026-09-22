@@ -8,7 +8,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 passed = failed = 0
@@ -92,7 +92,7 @@ sys.modules["dash.dcc"] = _dcc
 sys.modules["dash.dash_table"] = _dt
 
 import importlib.util  # noqa: E402
-spec = importlib.util.spec_from_file_location("demo_dash", ROOT / "app" / "demo_dash.py")
+spec = importlib.util.spec_from_file_location("demo_dash", ROOT / "frontend" / "demo_dash.py")
 ui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ui)
 
@@ -199,7 +199,7 @@ print("\nYOLOX UI - upload works here, unlike the annotation version")
 # each photo and a browser upload cannot carry one. A trained detector reads the
 # image, so uploading is fully supported - and is the better demo.
 spec_y = importlib.util.spec_from_file_location("demo_dash_yolox",
-                                                ROOT / "app" / "demo_dash_yolox.py")
+                                                ROOT / "frontend" / "demo_dash_yolox.py")
 yolox_ui = importlib.util.module_from_spec(spec_y)
 spec_y.loader.exec_module(yolox_ui)
 layout_text = yolox_ui.layout().text()
@@ -209,7 +209,7 @@ check("the upload component is wired", "uploads" in layout_text)
 check("staged-file feedback has a home", "upload-note" in layout_text)
 check("the folder path is still offered", "folder" in layout_text)
 
-src = (ROOT / "app" / "demo_dash_yolox.py").read_text()
+src = (ROOT / "frontend" / "demo_dash_yolox.py").read_text()
 check("uploads are staged to disk, not passed as base64 downstream",
       "dest.write_bytes(base64.b64decode(b64))" in src)
 check("a folder path takes precedence over uploads",

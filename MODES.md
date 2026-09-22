@@ -1,6 +1,6 @@
 # Three pipeline modes
 
-`app/demo_dash_modes.py` on **port 7872**. One click runs all three modes over
+`frontend/demo_dash_modes.py` on **port 7872**. One click runs all three modes over
 the same photographs; the mode selector then switches between three sets of
 results without re-running anything.
 
@@ -212,14 +212,14 @@ and 2 share one. See `PROXY.md`.
 
 | Path | Role |
 |---|---|
-| `app/pipeline/modes.py` | The three modes, the shared-work runner, comparison and agreement |
-| `app/pipeline/questions.py` | The three legs, their default system prompts and their fixed user prompts |
-| `app/pipeline/prompts.py` | `PromptStore` — reads and writes `config/prompts.yaml` |
-| `app/pipeline/stage2b_ocr.py` | Stage 2b — scope, the confidence floor, the numeric rule |
-| `app/pipeline/vlm_grounding.py` | Reading, refusing and scoring the model's coordinates |
-| `app/pipeline/stage3_vlm.py` | `ask_leg()`, `ask_vlm_only()`, `parse_quality()`, `parse_presence()` |
-| `app/demo_dash_modes.py` | The batch UI, 7872 |
-| `app/demo_dash_pipeline.py` | The per-photograph UI, 7873 |
+| `backend/pipeline/modes.py` | The three modes, the shared-work runner, comparison and agreement |
+| `backend/pipeline/questions.py` | The three legs, their default system prompts and their fixed user prompts |
+| `backend/pipeline/prompts.py` | `PromptStore` — reads and writes `config/prompts.yaml` |
+| `backend/pipeline/stage2b_ocr.py` | Stage 2b — scope, the confidence floor, the numeric rule |
+| `backend/pipeline/vlm_grounding.py` | Reading, refusing and scoring the model's coordinates |
+| `backend/pipeline/stage3_vlm.py` | `ask_leg()`, `ask_vlm_only()`, `parse_quality()`, `parse_presence()` |
+| `frontend/demo_dash_modes.py` | The batch UI, 7872 |
+| `frontend/demo_dash_pipeline.py` | The per-photograph UI, 7873 |
 | `config/questions/*.yaml` | The questions themselves — see `PLUGINS.md` |
 | `tests/test_modes.py` | 116 assertions |
 | `tests/test_ocr.py` | 85 assertions over stage 2b |

@@ -11,7 +11,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 
 # stage2_detect imports .detect_draw, which imports cv2 only inside functions,
 # but the module object must exist for the package import to succeed.

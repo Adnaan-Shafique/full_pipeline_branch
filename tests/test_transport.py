@@ -13,7 +13,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 passed = failed = 0

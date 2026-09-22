@@ -14,7 +14,7 @@ photograph:
 
 Questions, domains and detector classes are **YAML under `config/`**, not
 Python. `PLUGINS.md` is the procedure for adding or removing one; read it
-before editing `app/pipeline/questions.py`, which is now a compatibility
+before editing `backend/pipeline/questions.py`, which is now a compatibility
 surface over `registry.py` rather than where questions live.
 
 It integrates three previously independent tools. The bias throughout is
@@ -30,7 +30,7 @@ No build step, no linter, no pytest. Suites are standalone scripts that print
 `N passed, M failed` and exit non-zero on failure.
 
 ```bash
-# Every suite (798 assertions across thirteen files)
+# Every suite (816 assertions across thirteen files)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 # One suite, with its output
@@ -52,10 +52,10 @@ python tools/smoke_ocr.py --list x          # which questions use OCR, and their
 python tools/inspect_ckpt.py models/best_ckpt.pth
 
 # The UIs (each on its own port, all runnable at once)
-python app/demo_dash.py           # 7870 — FROZEN, annotation sidecars
-python app/demo_dash_yolox.py     # 7871 — trained detector
-python app/demo_dash_modes.py     # 7872 — three modes over a FOLDER of photos
-python app/demo_dash_pipeline.py  # 7873 — domain → question → ONE photo → 3 modes
+python frontend/demo_dash.py           # 7870 — FROZEN, annotation sidecars
+python frontend/demo_dash_yolox.py     # 7871 — trained detector
+python frontend/demo_dash_modes.py     # 7872 — three modes over a FOLDER of photos
+python frontend/demo_dash_pipeline.py  # 7873 — domain → question → ONE photo → 3 modes
 ```
 
 7872 and 7873 are both current and answer different questions. 7872 is the
@@ -67,9 +67,9 @@ Tests stub `cv2`, `dash` and `requests`. Measured on three interpreters:
 
 | Interpreter | Assertions | Suites failing |
 |---|---|---|
-| everything installed | **804** | 0 |
-| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **798** | 0 |
-| bare — nothing installed at all, `requests` and `pyyaml` included | **627** | 2, both pre-existing |
+| everything installed | **822** | 0 |
+| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **816** | 0 |
+| bare — nothing installed at all, `requests` and `pyyaml` included | **645** | 2, both pre-existing |
 
 Keep that middle row at zero — a suite that needs torch cannot run where it is
 most needed.
@@ -99,9 +99,34 @@ It did exactly that, silently, until the assertion count gave it away.
 
 ## Architecture
 
+### The frontend/backend split
+
+```
+backend/    the pipeline. Importable and testable with no UI installed.
+frontend/   the four Dash UIs. Imports backend/ as a library.
+```
+
+**The arrow points one way.** `frontend/` imports `backend/`; nothing under
+`backend/` imports anything from `frontend/`. That is not tidiness — it is what
+lets the whole pipeline run from a script, a test or a smoke tool on a machine
+with no Dash installed, which is how most of the suite runs. If you ever find
+yourself importing a renderer into a pipeline module, the thing you want is a
+field on the dataclass instead.
+
+Each UI puts `backend/` on `sys.path` itself (`BACKEND_DIR`), so the packages
+import as `pipeline.*` exactly as before the split. Tests add `ROOT / "backend"`;
+the UI suites also load the frontend files by path.
+
+**Depth is load-bearing.** Every `__file__`-derived path — `config.py`'s
+`parents[2]`, `registry.py`, `ocr_engine.py`, and
+`foreground_segmentation.py`'s `parent.parent` — assumes it sits exactly one or
+two levels below the project root. `backend/` and `frontend/` are at the same
+depth `app/` was, which is why the move needed no arithmetic changes. Introduce
+a `src/` above them and every one of those has to be re-derived.
+
 ### Stage contracts
 
-`app/pipeline/schemas.py` defines the dataclasses every stage fills and the UI
+`backend/pipeline/schemas.py` defines the dataclasses every stage fills and the UI
 reads. A `PipelineRecord` holds one photograph's `quality`, `detection`, `ocr`
 and `vlm` results plus `stopped_at`. Changing a field here touches every stage
 and all the renderers — read it first.
@@ -116,7 +141,7 @@ never a piece of visual evidence for the model.
 
 ### Configuration
 
-`app/pipeline/config.py` is a single `PipelineConfig` dataclass with
+`backend/pipeline/config.py` is a single `PipelineConfig` dataclass with
 `default_config(**overrides)`. Every path derives from `project_root`, which
 derives from `__file__`, so the tree relocates without edits. `validate()`
 returns human-readable warnings rather than raising — the UI shows them.
@@ -138,7 +163,7 @@ which is a 404 that reads as a dead server.
 
 ### Three modes
 
-`app/pipeline/modes.py` runs all three over one set of photographs, sharing
+`backend/pipeline/modes.py` runs all three over one set of photographs, sharing
 work: one quality pass, one detection pass, **one OCR pass**, and one VLM
 answer when modes 1 and 2 both proceed. Mode 3 replaces the classical stages
 with the model itself, as three separate calls with per-leg editable system
@@ -146,7 +171,7 @@ prompts. `MODES.md` has the reasoning.
 
 ### OCR (stage 2b)
 
-`app/pipeline/stage2b_ocr.py` drives `ocr_engine.py` (PP-OCRv6 through
+`backend/pipeline/stage2b_ocr.py` drives `ocr_engine.py` (PP-OCRv6 through
 RapidOCR, over the ONNX files committed in `models/ocr/`). It runs for the
 questions whose YAML sets `ocr.enabled` — four today — and **never in mode 3**,
 where the model reads the text itself. That asymmetry is the comparison
@@ -155,14 +180,14 @@ the OCR output.
 
 ### Mode 3's claimed boxes (grounding)
 
-`app/pipeline/vlm_grounding.py` turns coordinates the model wrote into boxes
+`backend/pipeline/vlm_grounding.py` turns coordinates the model wrote into boxes
 worth drawing. Mode 3's presence and answer legs are asked to point (the
 quality leg is not — it judges a whole-frame property). `MODES.md` has the full
 reasoning; the three rules that must not be relaxed are in the traps below.
 
 ### Questions, domains and classes — the plugin layer
 
-The data is **YAML under `config/`**; `app/pipeline/registry.py` reads it.
+The data is **YAML under `config/`**; `backend/pipeline/registry.py` reads it.
 `PLUGINS.md` is the procedure. In short:
 
 | File | Holds |
@@ -171,9 +196,9 @@ The data is **YAML under `config/`**; `app/pipeline/registry.py` reads it.
 | `config/classes.yaml` | every object class; `trained: true` entries derive `yolox_class_names` |
 | `config/questions/*.yaml` | the questions, one file per domain |
 
-`app/pipeline/question_types.py` holds the `Question` dataclass and the pure
+`backend/pipeline/question_types.py` holds the `Question` dataclass and the pure
 prompt helpers, split out so `registry.py` can build questions without
-importing the module the registry populates. `app/pipeline/questions.py` is the
+importing the module the registry populates. `backend/pipeline/questions.py` is the
 **stable import surface** over all of it — `from pipeline.questions import
 get_question, select_relevant, QUESTIONS` still resolves exactly as before, and
 that is the import every module and test should use.
@@ -187,18 +212,20 @@ persists UI overrides to `config/prompts.yaml` (gitignored, per-machine).
 
 ### Vendored code
 
-`app/vendor/yolox/` holds YOLOX utils under its Apache licence. **`yolox/models/`
+`backend/vendor/yolox/` holds YOLOX utils under its Apache licence. **`yolox/models/`
 is deliberately absent from git** — the upstream repo's bare `models/` gitignore
 pattern excluded it — and must be copied in per `YOLOX_SETUP.md`. `build_model()`
 raises an ImportError naming that cause when it is missing.
 
-`app/quality_check.py` and `app/foreground_segmentation.py` are vendored from
+`backend/quality_check.py` and `backend/foreground_segmentation.py` are vendored from
 the original toolset. `foreground_segmentation.py` computes `MODELS_DIR` from
-its own location, so it must stay directly in `app/`.
+its own location, so it must stay directly in `backend/` — one level below
+the project root, which is what makes `models/` resolve. `app/` was also one
+level below the root, which is why the move preserved it.
 
 ## Things that will bite you
 
-**`app/demo_dash.py` is frozen** (`FROZEN.md`, commit `f978b7d`). It is the
+**`frontend/demo_dash.py` is frozen** (`FROZEN.md`, commit `f978b7d`). It is the
 fallback that is known to work. `demo_dash_modes.py` imports renderers from it
 and re-implements only what mode 3 needs; `demo_dash_pipeline.py` imports from
 both and adds only the OCR panel. Do not "fix" the frozen file to avoid a

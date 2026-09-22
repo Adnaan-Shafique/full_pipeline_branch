@@ -1,4 +1,4 @@
-"""app/demo_dash_pipeline.py — the domain → question → photograph → 3 modes UI.
+"""frontend/demo_dash_pipeline.py — the domain → question → photograph → 3 modes UI.
 
 Reuses tests/test_dash_ui.py's dash stub, so this runs with dash absent and
 never starts a server. What it exercises is this screen's own decisions: the
@@ -11,7 +11,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
@@ -92,9 +92,9 @@ def load(name, path):
 
 
 # demo_dash_modes is imported by the app for its two mode-3-aware renderers.
-load("demo_dash", ROOT / "app" / "demo_dash.py")
-load("demo_dash_modes", ROOT / "app" / "demo_dash_modes.py")
-APP = load("demo_dash_pipeline", ROOT / "app" / "demo_dash_pipeline.py")
+load("demo_dash", ROOT / "frontend" / "demo_dash.py")
+load("demo_dash_modes", ROOT / "frontend" / "demo_dash_modes.py")
+APP = load("demo_dash_pipeline", ROOT / "frontend" / "demo_dash_pipeline.py")
 
 import pipeline.questions as pq                                        # noqa: E402
 from pipeline.modes import MODE_CLASSIC, MODE_ORDER, MODE_VLM_ONLY     # noqa: E402
@@ -303,7 +303,7 @@ check("direct names the 404 that reads as a dead server",
 print("\nthe run button is the only thing that runs the pipeline")
 # Switching tab or mode must re-read, never re-run: that is the entire reason
 # all three modes are computed in one pass.
-src = (ROOT / "app" / "demo_dash_pipeline.py").read_text()
+src = (ROOT / "frontend" / "demo_dash_pipeline.py").read_text()
 check("on_run checks which control fired before running",
       'triggered != "run"' in src)
 check("and the run body is a plain function the tests can drive",

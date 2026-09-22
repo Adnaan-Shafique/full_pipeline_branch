@@ -54,7 +54,7 @@ software dependency.
 
 | Software | Version | Licence | Used for |
 |---|---|---|---|
-| **YOLOX** | 0.3.0 | Apache-2.0 | Detector architecture (YOLOX-S), vendored in `app/vendor/yolox/` |
+| **YOLOX** | 0.3.0 | Apache-2.0 | Detector architecture (YOLOX-S), vendored in `backend/vendor/yolox/` |
 | **PyTorch** | 2.14.0 | BSD-3-Clause | Runs the detector |
 | **torchvision** | 0.29.0 | BSD-3-Clause | NMS (`ops.batched_nms`) in YOLOX's postprocess |
 | **loguru** | 0.7.3 | MIT | Required by `yolox.utils` |
@@ -89,7 +89,7 @@ this demo; versions there are its own.
 - **Ultralytics is AGPL-3.0** and is the one exception. It was used only to
   measure a local accuracy reference during training; no Ultralytics model is
   exported, deployed or shipped, and AGPL obligations attach to distribution.
-- **YOLOX is vendored** (`app/vendor/yolox/`) rather than installed, with its
+- **YOLOX is vendored** (`backend/vendor/yolox/`) rather than installed, with its
   Apache-2.0 `LICENSE` file kept alongside the code as that licence requires.
 - **u2netp.onnx is committed** to this repo so the demo never depends on a
   first-run download. Its Apache-2.0 terms travel with it.

@@ -26,24 +26,26 @@ error.
 ## 1. Vendor the two source modules
 
 The integrated pipeline needs two files from the original toolset. Nothing else
-from those scripts ships. Copy them into `app/` next to `pipeline/`:
+from those scripts ships. Copy them into `backend/` next to `pipeline/`:
 
 ```
 integrated_pipeline/
   config/                        <- IN GIT: the questions, domains and classes
     domains.yaml  classes.yaml  questions/*.yaml
-  app/
+  backend/
     quality_check.py             <- COPY IN
     foreground_segmentation.py   <- COPY IN
     pipeline/
       schemas.py  config.py  registry.py  questions.py  stage1_quality.py
+  frontend/
+    demo_dash_pipeline.py        <- the UI; imports backend/, never the reverse
   models/
     u2netp.onnx                  <- IN GIT
     ocr/*.onnx                   <- IN GIT (PP-OCRv6, ~6 MB)
 ```
 
 `foreground_segmentation.py` computes `MODELS_DIR` as
-`Path(__file__).parent.parent / "models"`, so placing it at `app/` makes that
+`Path(__file__).parent.parent / "models"`, so placing it at `backend/` makes that
 resolve to `integrated_pipeline/models` — exactly where `u2netp.onnx` already
 is. Put it anywhere else and rembg will look in the wrong directory and try to
 download.

@@ -4,7 +4,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 passed = failed = 0
@@ -297,7 +297,7 @@ sys.modules.update({"dash": _gr, "dash.html": _html, "dash.dcc": _dcc,
                     "dash.dash_table": _dt})
 
 import importlib.util  # noqa: E402
-spec = importlib.util.spec_from_file_location("ui", ROOT / "app" / "demo_dash_modes.py")
+spec = importlib.util.spec_from_file_location("ui", ROOT / "frontend" / "demo_dash_modes.py")
 ui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ui)
 layout_text = ui.layout().text()

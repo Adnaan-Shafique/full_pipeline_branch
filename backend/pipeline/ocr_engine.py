@@ -28,7 +28,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-# app/pipeline/ocr_engine.py -> app/pipeline -> app -> <project root>
+# backend/pipeline/ocr_engine.py -> backend/pipeline -> backend -> <project root>
 OCR_MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "ocr"
 CLS_MODEL = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"  # shared by every variant
 OCR_VARIANTS = {  # insertion order = display order

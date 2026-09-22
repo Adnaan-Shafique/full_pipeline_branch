@@ -18,10 +18,10 @@ FO=/data01/sds_field/Field_Ops
 RUN=$FO/models/yolox/runs/yolox_s_field_ops_20260909_183424
 
 # 1. The YOLOX network definition — nine .py files, the piece .gitignore ate.
-#    app/vendor/yolox/models must NOT already exist, or scp nests inside it.
-rm -rf app/vendor/yolox/models
-scp -r $REMOTE:$FO/src/YOLOX/yolox/models app/vendor/yolox/models
-rm -rf app/vendor/yolox/models/__pycache__
+#    backend/vendor/yolox/models must NOT already exist, or scp nests inside it.
+rm -rf backend/vendor/yolox/models
+scp -r $REMOTE:$FO/src/YOLOX/yolox/models backend/vendor/yolox/models
+rm -rf backend/vendor/yolox/models/__pycache__
 
 # 2. The trained weights (~70 MB).
 mkdir -p models
@@ -62,7 +62,7 @@ pip install torch torchvision \
 pip install loguru psutil
 
 # Does the vendored package import?
-python -c "import sys; sys.path.insert(0,'app/vendor'); \
+python -c "import sys; sys.path.insert(0,'backend/vendor'); \
   from yolox.models import YOLOX, YOLOPAFPN, YOLOXHead; print('yolox.models OK')"
 
 # Does the checkpoint match what we build?
@@ -72,7 +72,7 @@ python tools/inspect_ckpt.py models/best_ckpt.pth
 python tools/smoke_yolox.py /data/adnaan/fieldops/demo/photos \
     --ckpt models/best_ckpt.pth --limit 3
 
-python app/demo_dash_yolox.py        # http://10.19.71.246:7871
+python frontend/demo_dash_yolox.py        # http://10.19.71.246:7871
 ```
 
 `inspect_ckpt.py` should report **2 classes**, stem width **32** (→ 0.50, "s"),

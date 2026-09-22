@@ -11,7 +11,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 
 # The other suites stub cv2 unconditionally. This one must not: the live-engine
 # section at the end needs a REAL cv2 to draw its test image, and a stub

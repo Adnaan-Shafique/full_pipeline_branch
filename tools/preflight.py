@@ -211,7 +211,7 @@ def check_config_tree() -> None:
     the dropdown, with nothing on screen saying so - which is why every registry
     warning is printed here, before an audience is watching rather than during."""
     section("Config tree (domains, classes, questions)")
-    sys.path.insert(0, str(PROJECT_ROOT / "app"))
+    sys.path.insert(0, str(PROJECT_ROOT / "backend"))
     try:
         from pipeline.registry import load_registry
     except Exception as exc:
@@ -256,7 +256,7 @@ def check_ocr_models(offline_check: bool = False) -> None:
     answers a model path that does not exist by DOWNLOADING one, so on a host
     with no route out an absent file is a hang rather than an error."""
     section("OCR models (stage 2b)")
-    sys.path.insert(0, str(PROJECT_ROOT / "app"))
+    sys.path.insert(0, str(PROJECT_ROOT / "backend"))
     try:
         from pipeline import ocr_engine
     except Exception as exc:
@@ -454,7 +454,7 @@ def check_ports(want: int = 7870) -> None:
 
 def check_pipeline_imports() -> None:
     section("Pipeline modules")
-    sys.path.insert(0, str(PROJECT_ROOT / "app"))
+    sys.path.insert(0, str(PROJECT_ROOT / "backend"))
     try:
         from pipeline import config as pcfg
         from pipeline import questions as pq
@@ -484,7 +484,7 @@ def check_vendored_modules() -> None:
     because the pipeline package itself still imports fine.
     """
     section("Vendored source modules")
-    app_dir = PROJECT_ROOT / "app"
+    app_dir = PROJECT_ROOT / "backend"
     needed = {
         "quality_check.py": ["assess_quality", "QualityConfig", "load_image_bgr", "CUE_MESSAGES"],
         "foreground_segmentation.py": ["get_foreground_box", "preload", "draw_box",

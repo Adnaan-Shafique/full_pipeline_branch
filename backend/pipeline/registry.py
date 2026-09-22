@@ -36,7 +36,7 @@ from typing import Optional
 
 from .question_types import (NumericRule, OCRSpec, Question, build_user_template)
 
-# app/pipeline/registry.py -> app/pipeline -> app -> <project root>
+# backend/pipeline/registry.py -> backend/pipeline -> backend -> <project root>
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 
 # Override for tests and for running against a second config tree without

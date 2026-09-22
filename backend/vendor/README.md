@@ -1,9 +1,9 @@
-# `app/vendor/yolox` — vendored YOLOX 0.3.0 (Apache-2.0)
+# `backend/vendor/yolox` — vendored YOLOX 0.3.0 (Apache-2.0)
 
 Copied from `src/YOLOX/yolox/` in the field-ops repo. The demo host has no
 route to that repo, so the pieces the detector needs travel with the pipeline —
 the same reasoning that vendored `quality_check.py` and
-`foreground_segmentation.py` into `app/`.
+`foreground_segmentation.py` into `backend/`.
 
 ## What is here
 
@@ -32,7 +32,7 @@ are simply untracked.
 
 Copy the folder here:
 
-    cp -r <field-ops>/src/YOLOX/yolox/models app/vendor/yolox/models
+    cp -r <field-ops>/src/YOLOX/yolox/models backend/vendor/yolox/models
 
 Expected contents: `__init__.py`, `build.py`, `darknet.py`, `losses.py`,
 `network_blocks.py`, `yolo_fpn.py`, `yolo_head.py`, `yolo_pafpn.py`,
@@ -53,7 +53,7 @@ directories.
 `yolox/layers/` — they pull `pycocotools`, dataset loaders and training
 machinery none of which inference needs. The one thing required from
 `yolox/data` is `preproc`, copied verbatim into
-`app/pipeline/yolox_runtime.py` with attribution.
+`backend/pipeline/yolox_runtime.py` with attribution.
 
 `mlflow`, `wandb`, `dotenv` and `thop` are imported lazily inside functions
 throughout `yolox/utils`, so none of them is needed to run inference.

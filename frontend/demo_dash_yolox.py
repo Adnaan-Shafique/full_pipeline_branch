@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Field Ops integrated demo - Dash UI, TRAINED YOLOX-S detector.
 
-    python app/demo_dash_yolox.py       ->  http://<host>:7871
+    python frontend/demo_dash_yolox.py       ->  http://<host>:7871
 
-The annotation-file version is app/demo_dash.py on 7870 (frozen at the
+The annotation-file version is frontend/demo_dash.py on 7870 (frozen at the
 dash-ui-v1 commit in FROZEN.md). This one differs in exactly one leg: stage 2
 runs the trained YOLOX-S checkpoint instead of reading human .txt sidecars.
 Different port on purpose, so both can be up at once and either can be shown.
@@ -25,8 +25,15 @@ import sys
 import traceback
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(APP_DIR))
+# frontend/<this file> -> frontend -> <project root>. The UI imports the
+# pipeline as a library, so the backend package directory goes on the path
+# explicitly; nothing under backend/ imports anything from frontend/, and that
+# one-way arrow is the whole point of the split.
+UI_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = UI_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(UI_DIR))
 
 from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update  # noqa: E402
 
@@ -245,7 +252,7 @@ def layout():
 
 app = Dash(__name__, external_stylesheets=FONT_SHEET,
            title="Field Ops Demo — YOLOX", update_title="Running…",
-           assets_folder=str(APP_DIR / "assets"), suppress_callback_exceptions=True)
+           assets_folder=str(UI_DIR / "assets"), suppress_callback_exceptions=True)
 app.layout = layout()
 server = app.server
 

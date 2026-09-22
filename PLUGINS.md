@@ -220,7 +220,7 @@ the entry that caused it is dropped:
 | `domains.yaml` missing | the built-in `Site Safety` domain only |
 | pyyaml not installed | the two built-in questions, and a line saying so in every status bar |
 
-The last one is why `app/pipeline/registry.py` keeps `BUILTIN_QUESTIONS` and
+The last one is why `backend/pipeline/registry.py` keeps `BUILTIN_QUESTIONS` and
 `BUILTIN_CLASSES` as Python. `tests/test_yolox.py` pins those copies against
 the YAML so a fallback that has drifted — which would relabel every detection
 with nothing raising — fails a suite instead.

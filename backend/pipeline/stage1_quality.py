@@ -25,10 +25,10 @@ from typing import Optional
 
 from .schemas import QualityStageResult
 
-# The existing modules live in app/, one level up from app/pipeline/.
-_APP_DIR = Path(__file__).resolve().parents[1]
-if str(_APP_DIR) not in sys.path:
-    sys.path.insert(0, str(_APP_DIR))
+# The existing modules live in app/, one level up from backend/pipeline/.
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 
 try:
     from quality_check import (            # noqa: E402
@@ -46,7 +46,7 @@ try:
 except ImportError as exc:  # pragma: no cover - environment problem, not a code path
     raise ImportError(
         f"Stage 1 needs quality_check.py and foreground_segmentation.py on the "
-        f"path (looked in {_APP_DIR}), plus their dependencies:\n"
+        f"path (looked in {_BACKEND_DIR}), plus their dependencies:\n"
         f"  pip install opencv-python numpy pillow rembg onnxruntime\n"
         f"Original error: {exc}"
     ) from exc

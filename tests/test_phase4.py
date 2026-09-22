@@ -11,7 +11,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 from pipeline.orchestrator import (collect_images, new_run_id, sort_for_display,  # noqa: E402
@@ -147,7 +147,7 @@ for _name in ("Blocks", "Progress", "Row", "Column", "Group", "Tabs", "Tab",
     setattr(_gr, _name, _Anything)
 sys.modules["gradio"] = _gr
 import importlib.util  # noqa: E402
-spec = importlib.util.spec_from_file_location("demo_app", ROOT / "app" / "demo_app.py")
+spec = importlib.util.spec_from_file_location("demo_app", ROOT / "frontend" / "demo_app.py")
 demo_app = importlib.util.module_from_spec(spec)
 try:
     spec.loader.exec_module(demo_app)

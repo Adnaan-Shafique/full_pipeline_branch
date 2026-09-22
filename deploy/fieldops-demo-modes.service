@@ -1,4 +1,4 @@
-# Three-mode field-ops demo UI (app/demo_dash_modes.py), port 7872.
+# Three-mode field-ops demo UI (frontend/demo_dash_modes.py), port 7872.
 #
 # Install per SERVICE.md. Every path below assumes the field-ops VM layout:
 #   /data/adnaan/field_ops/integrated_pipeline
@@ -32,7 +32,7 @@ Environment=DASH_HOST=0.0.0.0
 Environment=DASH_PORT=7872
 
 ExecStart=/data/adnaan/field_ops/integrated_pipeline/venv_yolox/bin/python \
-          /data/adnaan/field_ops/integrated_pipeline/app/demo_dash_modes.py
+          /data/adnaan/field_ops/integrated_pipeline/frontend/demo_dash_modes.py
 
 Restart=always
 RestartSec=5

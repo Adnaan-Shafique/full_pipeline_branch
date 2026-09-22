@@ -9,7 +9,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 passed = failed = 0
@@ -226,7 +226,7 @@ check("a small photo is sent unchanged", encoded_size(FakeArr(600, 800)) == (800
 check("the cap matches what array_to_data_uri uses", MAX_UPLOAD_SIDE_PX == 2048)
 
 print("\ndrawing: the visual language must not read as a detection")
-draw_src = (ROOT / "app" / "pipeline" / "detect_draw.py").read_text()
+draw_src = (ROOT / "backend" / "pipeline" / "detect_draw.py").read_text()
 check("claimed boxes are drawn dashed", "_dashed_line" in draw_src)
 check("and detections are not", "_dashed_line" not in
       draw_src.split("def draw_detections(")[1])
@@ -327,8 +327,8 @@ finally:
     sys.exit = _real_exit
 for _n in ("Textarea", "Slider", "Markdown", "Graph"):
     setattr(sys.modules["dash.dcc"], _n, _stub["Node"])
-_load("demo_dash", ROOT / "app" / "demo_dash.py")
-UI = _load("demo_dash_modes", ROOT / "app" / "demo_dash_modes.py")
+_load("demo_dash", ROOT / "frontend" / "demo_dash.py")
+UI = _load("demo_dash_modes", ROOT / "frontend" / "demo_dash_modes.py")
 
 
 class FakeDet:
@@ -370,7 +370,7 @@ check("and it still falls back to the plain photograph",
       UI.overlay_path(BrokenDet(), "box") == "/a.jpg")
 
 print("\nthe toggle is a VIEW control and must never re-run the pipeline")
-app_src = (ROOT / "app" / "demo_dash_pipeline.py").read_text()
+app_src = (ROOT / "frontend" / "demo_dash_pipeline.py").read_text()
 check("overlay is an Input, so changing it re-renders",
       'Input("overlay", "value")' in app_src)
 check("but only the Run button reaches execute_run",

@@ -56,10 +56,10 @@ All are Dash apps and all can run at once.
 
 | App | Port | What it is for | Status |
 |---|---|---|---|
-| `app/demo_dash.py` | 7870 | annotation sidecars, one mode | **frozen** — the known-good fallback |
-| `app/demo_dash_yolox.py` | 7871 | trained detector, one mode | superseded |
-| `app/demo_dash_modes.py` | 7872 | three modes over a **folder** of photographs | current — the batch screen |
-| `app/demo_dash_pipeline.py` | 7873 | domain → question → **one photograph** → three modes | current — the per-photograph screen |
+| `frontend/demo_dash.py` | 7870 | annotation sidecars, one mode | **frozen** — the known-good fallback |
+| `frontend/demo_dash_yolox.py` | 7871 | trained detector, one mode | superseded |
+| `frontend/demo_dash_modes.py` | 7872 | three modes over a **folder** of photographs | current — the batch screen |
+| `frontend/demo_dash_pipeline.py` | 7873 | domain → question → **one photograph** → three modes | current — the per-photograph screen |
 
 7872 and 7873 are both current and answer different questions. Running twenty
 photographs to find the two where the modes disagree is a different job from
@@ -117,12 +117,12 @@ python tools/preflight.py --port 7873
 # Every test (798 assertions, thirteen suites; 804 with every dependency present)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
-python app/demo_dash_pipeline.py   # http://<host>:7873
+python frontend/demo_dash_pipeline.py   # http://<host>:7873
 ```
 
 Two things are **not** in this repository and must be copied in — the trained
 checkpoint (`models/best_ckpt.pth`, ~70 MB) and the YOLOX network definition
-(`app/vendor/yolox/models/`, which upstream's `.gitignore` excluded). See
+(`backend/vendor/yolox/models/`, which upstream's `.gitignore` excluded). See
 `COPY_FROM_AISERVER.md` and `YOLOX_SETUP.md`. The demo runs without either, on
 annotation sidecars, which is how the Infra questions run regardless.
 
@@ -178,10 +178,15 @@ looked is the one thing this demo will not do.
 
 ## Repository layout
 
+`backend/` is the pipeline and `frontend/` is the UI, and the arrow between
+them points one way: the UIs import the pipeline as a library, and **nothing
+under `backend/` imports anything from `frontend/`**. That is what lets the
+whole pipeline be imported, tested and driven from a script on a machine with
+no Dash installed — which is most of the test suite.
+
 ```
 config/                 THE QUESTIONS - domains, classes, questions (see PLUGINS.md)
-app/
-  demo_dash*.py         the four UIs
+backend/                the pipeline, importable with no UI installed
   pipeline/             schemas, config, the registry, the stages, modes
     registry.py         reads config/ into domains, classes and questions
     question_types.py   the Question dataclass and the pure prompt helpers
@@ -190,6 +195,9 @@ app/
   vendor/yolox/         vendored YOLOX utils (Apache 2.0)
   quality_check.py      vendored from the original quality tool
   foreground_segmentation.py
+frontend/               the four Dash UIs - nothing here is imported by backend/
+  demo_dash*.py
+  assets/demo.css
 tools/                  preflight + one smoke script per stage
 tests/                  thirteen standalone suites - no pytest, no build step
 deploy/                 systemd units and an env template

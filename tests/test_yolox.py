@@ -9,7 +9,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "backend"))
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 passed = failed = 0
@@ -180,7 +180,7 @@ print("\nno tool hardcodes class names over the config")
 import re as _re  # noqa: E402
 
 offenders = []
-for path in sorted((ROOT / "tools").glob("*.py")) + [ROOT / "app" / "demo_dash_yolox.py"]:
+for path in sorted((ROOT / "tools").glob("*.py")) + [ROOT / "frontend" / "demo_dash_yolox.py"]:
     text = path.read_text()
     for match in _re.finditer(r'add_argument\(\s*["\']--classes["\'][^)]*?\)', text,
                               _re.S):
@@ -203,7 +203,7 @@ check("smoke_yolox falls back to cfg.yolox_class_names",
 # A fallback that has drifted from the real thing is worse than no fallback:
 # it relabels every detection and nothing errors. So rather than banning the
 # second copy, pin the three against each other here.
-cfg_src = (ROOT / "app" / "pipeline" / "config.py").read_text()
+cfg_src = (ROOT / "backend" / "pipeline" / "config.py").read_text()
 check("config.py still carries the pinned fallback names",
       "GPS Antenna" in cfg_src and "Warning sign" in cfg_src)
 check("config.py points at the YAML as the source of truth",
@@ -238,7 +238,7 @@ check("registry.py's no-pyyaml fallback agrees too, in order",
 # Everything else must still not name them. question_types.py in particular
 # describes the matching rules without repeating a single class name.
 EXEMPT = {"config.py", "questions.py", "registry.py"}
-for path in sorted((ROOT / "app" / "pipeline").glob("*.py")):
+for path in sorted((ROOT / "backend" / "pipeline").glob("*.py")):
     if path.name in EXEMPT:
         continue
     body = path.read_text()
