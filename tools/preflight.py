@@ -74,7 +74,8 @@ def check_python() -> None:
 def check_imports() -> None:
     section("Dependencies")
     required = ["cv2", "numpy", "PIL", "pandas", "requests", "gradio"]
-    optional = ["rembg", "onnxruntime", "torch", "ultralytics", "dash"]
+    optional = ["rembg", "onnxruntime", "torch", "ultralytics", "dash",
+                "rapidocr", "yaml"]
     missing_required = []
     for mod in required:
         try:
@@ -103,6 +104,17 @@ def check_imports() -> None:
             if mod in ("rembg", "onnxruntime"):
                 fail(f"{mod} is missing - stage 1 cannot segment without it "
                      f"(pip install rembg onnxruntime)")
+            elif mod == "rapidocr":
+                # Not a failure: stage 2b is skipped and its four questions are
+                # answered from the image alone, which is a legitimate - and
+                # clearly labelled - way to run the demo.
+                warn("rapidocr not installed - stage 2b (OCR) will be skipped, "
+                     "and the four questions that use it answered from the "
+                     "image alone (pip install rapidocr)")
+            elif mod == "yaml":
+                fail("pyyaml is missing - config/ cannot be read at all, so "
+                     "only the two built-in Site Safety questions will be "
+                     "available (pip install pyyaml)")
             else:
                 warn(f"{mod} not installed - only needed for use_model=True (real detector)")
 
@@ -192,6 +204,117 @@ def check_u2netp(offline_check: bool) -> None:
             ok("u2netp loaded with the network down - no first-run download")
         except Exception as exc:
             fail(f"u2netp failed to load offline: {exc}")
+
+
+def check_config_tree() -> None:
+    """The plugin layer. A question that failed to load is simply ABSENT from
+    the dropdown, with nothing on screen saying so - which is why every registry
+    warning is printed here, before an audience is watching rather than during."""
+    section("Config tree (domains, classes, questions)")
+    sys.path.insert(0, str(PROJECT_ROOT / "app"))
+    try:
+        from pipeline.registry import load_registry
+    except Exception as exc:
+        fail(f"the registry could not be imported: {exc}")
+        return
+
+    registry = load_registry()
+    if "built-in" in registry.source:
+        warn(f"running on the BUILT-IN questions, not config/: {registry.source}")
+    else:
+        ok(f"loaded from {registry.source}")
+
+    domains = registry.ordered_domains()
+    ok(f"{len(registry.questions)} questions across {len(domains)} domain(s): "
+       + ", ".join(f"{d.label} ({len(registry.questions_in(d.id))})" for d in domains))
+
+    trained = registry.trained_classes()
+    ok(f"{len(registry.classes)} object classes, {len(trained)} with trained "
+       f"weights: {', '.join(c.name for c in trained)}")
+
+    with_ocr = [q.id for q in registry.questions.values() if q.ocr.enabled]
+    ok(f"{len(with_ocr)} question(s) use the OCR stage: {', '.join(with_ocr)}")
+
+    # Every question whose prompt promises OCR evidence must carry a mode-3
+    # variant that does not, or mode 3 is told to expect what it never gets.
+    missing = [q.id for q in registry.questions.values()
+               if q.ocr.enabled and not q.system_prompt_no_ocr.strip()]
+    if missing:
+        warn(f"these use OCR but have no system_prompt_no_ocr, so mode 3 will be "
+             f"told to expect OCR text it never receives: {', '.join(missing)}")
+    else:
+        ok("every OCR question carries a mode-3 system prompt of its own")
+
+    for problem in registry.warnings:
+        warn(f"config: {problem}")
+    if not registry.warnings:
+        ok("no config warnings")
+
+
+def check_ocr_models(offline_check: bool = False) -> None:
+    """Stage 2b's models. The failure that matters here is subtle: RapidOCR
+    answers a model path that does not exist by DOWNLOADING one, so on a host
+    with no route out an absent file is a hang rather than an error."""
+    section("OCR models (stage 2b)")
+    sys.path.insert(0, str(PROJECT_ROOT / "app"))
+    try:
+        from pipeline import ocr_engine
+    except Exception as exc:
+        fail(f"pipeline.ocr_engine could not be imported: {exc}")
+        return
+
+    model_dir = PROJECT_ROOT / "models" / "ocr"
+    present = ocr_engine.available_variants(model_dir)
+    if not present:
+        warn(f"no PP-OCRv6 ONNX files in {model_dir} - stage 2b will be skipped")
+        return
+    ok(f"variants present: {', '.join(present)}")
+    ok(f"default variant: {ocr_engine.default_variant(model_dir)}")
+
+    for name in sorted(p.name for p in model_dir.glob("*.onnx")):
+        path = model_dir / name
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        ok(f"{name}  {path.stat().st_size:,} bytes  sha256 {digest[:16]}…")
+
+    if ocr_engine.angle_classifier_available(model_dir):
+        ok("angle classifier present")
+    else:
+        warn(f"{ocr_engine.CLS_MODEL} is absent - the Cls path is omitted rather "
+             f"than pointed at a missing file (which would wake RapidOCR's "
+             f"downloader). Text rotated 180 degrees reads worse; upright text "
+             f"is unaffected")
+
+    try:
+        import rapidocr  # noqa: F401
+    except ImportError:
+        warn("rapidocr is not installed, so the models above cannot actually be "
+             "loaded - stage 2b will be skipped")
+        return
+
+    if offline_check:
+        # The real test: build the engines with the network denied. A silent
+        # download attempt shows up here as a hang or a socket error, which is
+        # exactly what must not happen on stage.
+        real_socket = socket.socket
+
+        class _Denied(socket.socket):
+            def connect(self, *a, **k):
+                raise OSError("network denied by preflight --offline-check")
+
+        socket.socket = _Denied
+        try:
+            ocr_engine.preload(model_dir=model_dir)
+            ok("both engines built with the network denied - no download is attempted")
+        except Exception as exc:
+            fail(f"building the OCR engines reached for the network or failed: {exc}")
+        finally:
+            socket.socket = real_socket
+    else:
+        try:
+            ocr_engine.preload(model_dir=model_dir)
+            ok("both engines (whole-image and crop) built")
+        except Exception as exc:
+            fail(f"the OCR engines failed to build: {exc}")
 
 
 def check_gpu(gpu_url: str, transport: str = "direct", api_key: str = "") -> None:
@@ -447,7 +570,7 @@ def main() -> int:
     ap.add_argument("--offline-check", action="store_true",
                     help="interactively verify u2netp loads with the network down")
     ap.add_argument("--skip-gpu", action="store_true")
-    ap.add_argument("--port", type=int, default=7870,
+    ap.add_argument("--port", type=int, default=7873,
                     help="the port this run intends to bind (7870 for demo_dash.py, "
                          "7871 for demo_dash_yolox.py). Only that one is required "
                          "free; the others are reported for information.")
@@ -461,6 +584,8 @@ def main() -> int:
     check_imports()
     check_gradio_version()
     check_u2netp(args.offline_check)
+    check_ocr_models(args.offline_check)
+    check_config_tree()
     check_vendored_modules()
     check_pipeline_imports()
     check_annotations(args.labels)

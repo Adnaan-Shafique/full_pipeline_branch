@@ -11,6 +11,63 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v0.7 — Domains, OCR and the plugin layer · 2026-09-22
+
+| Commit | Change |
+|---|---|
+| `3b4761a` | questions, domains and detector classes move from Python to `config/` |
+| `0a10ce0` | OCR added as stage 2b, between detection and the model |
+| `a5ac5df` | `app/demo_dash_pipeline.py` on port 7873; mode 3's OCR mis-framing fixed |
+
+**Scope.** Two questions became sixteen, in two domains. The fourteen new ones
+are the site-infrastructure checklist: lightning arrestor, enclosure condition
+inside and out, Roxtec sealing, Class B and C SPD installed and active,
+rectifier modules, temperature sensor placement and reading, earth pit and
+earthing value, DCDB cable tagging.
+
+**The plugin layer.** `config/domains.yaml`, `config/classes.yaml` and
+`config/questions/*.yaml`, read by the new `app/pipeline/registry.py`. Adding
+or removing a question, domain or object class is a YAML edit —
+`PLUGINS.md` is the procedure, and the **Reload config/** button on 7873 picks
+it up without a restart. `app/pipeline/questions.py` remains the import surface,
+so every existing import still resolves. `yolox_class_names` is now derived
+from the YAML's explicit `yolox_index` values.
+
+**Stage 2b — OCR.** PP-OCRv6 tiny through RapidOCR, over ONNX files committed
+under `models/ocr/`. Runs for the four questions whose YAML sets
+`ocr.enabled` — the two SPD "installed" questions and the two device readings —
+and reads the relevant detected boxes, falling back to the whole frame when
+detection finds nothing. Its text and any threshold check reach the model as
+*advisory evidence*; the pipeline never answers from them.
+
+**Mode 3 runs no OCR**, deliberately: on a device reading its answer is the
+model reading the display unaided, which is the comparison the new screen
+exists to show. Running the app surfaced a real bug here — all four OCR
+questions were telling mode 3 that OCR text "may be supplied", which in that
+mode it never is. Questions now carry a `system_prompt_no_ocr` for that leg.
+
+**New UI.** `app/demo_dash_pipeline.py` on **7873**: domain → question → one
+photograph → all three modes side by side, with an OCR panel and a Prompts tab
+showing exactly what each mode sent. 7872 stays current as the batch screen;
+7870 stays frozen.
+
+**Also.** `tools/smoke_ocr.py`; `preflight.py` gains config-tree and OCR-model
+sections and an `--offline-check` that builds the OCR engines with the network
+denied; `deploy/fieldops-demo-pipeline.service`; `rapidocr` added to
+`requirements-demo.txt` as a soft dependency, and `pyyaml` reclassified as
+required.
+
+**711 assertions, twelve suites** on a host without the heavy dependencies
+(up from 459 across nine); 717 with everything installed, and 540 on a bare
+interpreter where the pyyaml-dependent sections skip themselves rather than
+crash. Two existing
+assertions changed, both pinning facts this work deliberately changes:
+`test_phase1`'s "two questions registered", and `test_yolox`'s ban on a second
+definition of the class names — replaced by a stricter check that pins the
+YAML, `config.py`'s fallback and `registry.py`'s fallback against each other.
+
+---
+
 ## v0.6 — Deployment · 2026-09-18
 
 | Commit | Change |

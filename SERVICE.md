@@ -1,7 +1,19 @@
 # Running the demo as a service
 
-`app/demo_dash_modes.py` on port 7872, started at boot and restarted if it
-dies. Templates live in `deploy/`.
+Two units, two ports, both startable at boot and both restarted if they die.
+Templates live in `deploy/`.
+
+| Unit | App | Port | What it is |
+|---|---|---|---|
+| `fieldops-demo-modes.service` | `app/demo_dash_modes.py` | 7872 | three modes over a folder of photographs |
+| `fieldops-demo-pipeline.service` | `app/demo_dash_pipeline.py` | 7873 | domain → question → one photograph → three modes |
+
+They are independent and can run together — different ports, no shared state
+beyond the read-only `config/` tree and `demo_runs/`. Everything below is
+written for the modes unit on 7872; for 7873 substitute the unit name, the app
+and the port throughout. The pipeline unit also carries a commented
+`FIELDOPS_CONFIG_DIR`, for pointing a host at a second question set without
+touching the checkout.
 
 Everything below assumes the field-ops VM:
 
@@ -50,7 +62,9 @@ journalctl -u fieldops-demo-modes -f          # Ctrl-C to stop following
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7872/    # expect 200
 ```
 
-Then open `http://10.19.75.122:7872/` and press **Load / check model**. It
+Then open `http://10.19.75.122:7872/` (or `:7873/`) and press **Load / check
+model** — **Check host** on 7873, which also reports how many questions loaded
+and whether the OCR models are present. It
 should report the proxy route, not "answers will be MOCK". If it reports MOCK,
 the environment file is not reaching the process — `systemctl show
 fieldops-demo-modes -p Environment` shows what it actually got.
@@ -79,6 +93,7 @@ Binding 0.0.0.0 is not enough — the host still has to allow the port:
 
 ```bash
 sudo firewall-cmd --permanent --add-port=7872/tcp && sudo firewall-cmd --reload
+sudo firewall-cmd --permanent --add-port=7873/tcp && sudo firewall-cmd --reload
 sudo firewall-cmd --list-ports
 ```
 

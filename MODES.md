@@ -6,9 +6,10 @@ results without re-running anything.
 
 | | Mode 1 | Mode 2 | Mode 3 |
 |---|---|---|---|
-| Name | Quality gate → Detector → Model | (Quality **OR** Detector) → Model | Everything by the model |
+| Name | Quality gate → Detector → OCR → Model | (Quality **OR** Detector) → OCR → Model | Everything by the model |
 | Quality | MM-IQA + u2netp, **hard gate** | MM-IQA + u2netp, advisory | the model judges it |
 | Detection | YOLOX-S, boxes | YOLOX-S, boxes | the model reports presence, **no boxes** |
+| OCR | PP-OCRv6 | PP-OCRv6 | **none** — the model reads the text |
 | Question | Qwen3-VL | Qwen3-VL | Qwen3-VL, a third call of its own |
 | A blurry photo whose sign is clearly detected | **dropped** | **answered** | answered if the model calls it usable |
 
@@ -23,11 +24,11 @@ gate passes **or** the detector found the subject. The argument: a soft-focus
 shot where the warning sign is plainly detected at 0.94 is not a photo you
 should throw away. Every card in this mode states *why* it was let through.
 
-**Mode 3** — no u2netp, no YOLOX. The vision model makes all three judgements
-itself, as **three separate calls** over the same photograph: is it usable, is
-the subject there, and what is the answer. The argument: one model that sees the
-whole photograph may judge those more coherently than three components that each
-see a slice.
+**Mode 3** — no u2netp, no YOLOX, **and no OCR**. The vision model makes all
+three judgements itself, as **three separate calls** over the same photograph:
+is it usable, is the subject there, and what is the answer. The argument: one
+model that sees the whole photograph may judge those more coherently than three
+components that each see a slice.
 
 They are three calls rather than one so that each leg has its **own system
 prompt**, editable in the UI, and so that a wording change to one judgement
@@ -57,8 +58,43 @@ needed when mode 1 stops a photo that mode 2 lets through. Mode 3 adds three
 calls of its own — one per leg. Typical cost is therefore **four model calls per
 photograph** for all three modes.
 
-On current timings (~2s quality, ~3s detection, ~0.4s per model call) that is
-roughly **6.5s per photograph** for all three modes, against ~5.5s for one.
+OCR is shared the same way: one pass, read by both modes 1 and 2, and skipped
+entirely unless at least one of them is going to ask the model something. On a
+question that does not use OCR it costs nothing at all.
+
+On current timings (~2s quality, ~3s detection, ~0.06s per detected box or
+~0.34s for a whole frame of OCR, ~0.4s per model call) that is roughly **6.5s
+per photograph** for all three modes, against ~5.5s for one.
+
+## Mode 3 and OCR
+
+Four questions carry an OCR stage: the two SPD "installed" questions, decided
+by the class marking printed on the module body, and the two device readings,
+where the answer is a number on a display. Modes 1 and 2 run PP-OCRv6 on them
+and hand the model the text. **Mode 3 does not**, and that is the single most
+interesting thing on the screen.
+
+Handing mode 3 the transcription would make it answer *better* and tell you
+*nothing*. Left alone, its answer is the model reading a seven-segment display
+or a weathered module label unaided — which is exactly the question anyone
+evaluating this pipeline for an edge device is actually asking. Where mode 3
+disagrees with modes 1 and 2 on a reading, the Stage detail tab on 7873 shows
+what PP-OCRv6 read next to what the model says it saw, and the disagreement is
+usually legible in one glance.
+
+This asymmetry also means mode 3 needs its own wording. A question with an OCR
+stage tells the model in its system prompt that OCR text "may be supplied to
+you as advisory evidence" — and in mode 3 it never is. Promising evidence that
+does not arrive is the worst available framing for the one mode meant to
+measure unaided reading, so those four questions carry a `system_prompt_no_ocr`
+that mode 3's answer leg uses instead, telling the model to read the text
+itself and say what digits it saw. See `PLUGINS.md`.
+
+The OCR output is **advisory even in modes 1 and 2**. It arrives behind a hedge
+telling the model to prefer the image, and where a question carries a numeric
+rule, the threshold check arrives the same way — as a computed line of
+evidence, never as the answer. `DECISIONS.md` has the three failure modes that
+make that non-negotiable.
 
 ## What mode 3 does NOT do
 
@@ -110,9 +146,15 @@ and 2 share one. See `PROXY.md`.
 | `app/pipeline/modes.py` | The three modes, the shared-work runner, comparison and agreement |
 | `app/pipeline/questions.py` | The three legs, their default system prompts and their fixed user prompts |
 | `app/pipeline/prompts.py` | `PromptStore` — reads and writes `config/prompts.yaml` |
+| `app/pipeline/stage2b_ocr.py` | Stage 2b — scope, the confidence floor, the numeric rule |
 | `app/pipeline/stage3_vlm.py` | `ask_leg()`, `ask_vlm_only()`, `parse_quality()`, `parse_presence()` |
-| `app/demo_dash_modes.py` | The UI |
-| `tests/test_modes.py` | 90 assertions |
+| `app/demo_dash_modes.py` | The batch UI, 7872 |
+| `app/demo_dash_pipeline.py` | The per-photograph UI, 7873 |
+| `config/questions/*.yaml` | The questions themselves — see `PLUGINS.md` |
+| `tests/test_modes.py` | 116 assertions |
+| `tests/test_ocr.py` | 85 assertions over stage 2b |
 
 Each mode writes its own `pipeline_results.csv` and `results.json` under
-`demo_runs/<run_id>/<mode>/`.
+`demo_runs/<run_id>/<mode>/`. The CSV carries nine OCR columns, including
+`ocr_numeric_value` and `ocr_numeric_passes` — both blank when no reading was
+matched, which is not the same as a failed check and must not be read as one.

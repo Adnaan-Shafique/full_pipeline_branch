@@ -212,12 +212,23 @@ check("config.py points at the YAML as the source of truth",
 from pipeline.config import PipelineConfig, registry_class_names  # noqa: E402
 from pipeline.registry import BUILTIN_CLASSES, load_registry      # noqa: E402
 
+try:
+    import yaml as _yaml  # noqa: F401
+    HAVE_YAML = True
+except ImportError:
+    HAVE_YAML = False
+
 yaml_names = registry_class_names()
-check("config/classes.yaml resolves to a non-empty trained class list",
+# Without pyyaml the registry serves BUILTIN_CLASSES, so this comparison is
+# between the two fallbacks rather than between the YAML and a fallback. It is
+# still worth making - they must agree either way - but the name would lie.
+check("the trained class list resolves to something non-empty",
       bool(yaml_names), f"got {yaml_names}")
-check("the YAML and config.py's fallback agree, in order",
+check(("config/classes.yaml and config.py's fallback agree, in order"
+       if HAVE_YAML else
+       "registry and config.py fallbacks agree, in order (pyyaml absent)"),
       yaml_names == PipelineConfig().yolox_class_names,
-      f"yaml={yaml_names} fallback={PipelineConfig().yolox_class_names}")
+      f"resolved={yaml_names} fallback={PipelineConfig().yolox_class_names}")
 builtin_names = tuple(
     c.name for c in sorted((c for c in BUILTIN_CLASSES.values() if c.trained),
                            key=lambda c: c.yolox_index))
@@ -236,23 +247,27 @@ for path in sorted((ROOT / "app" / "pipeline").glob("*.py")):
 
 # A gap or a duplicate in yolox_index must demote the class and warn, never
 # silently produce a list whose positions no longer match the head's outputs.
+# Needs pyyaml: without it load_registry() never opens classes.yaml at all.
 import tempfile, textwrap  # noqa: E402
+if not HAVE_YAML:
+    print("  (pyyaml absent - the yolox_index validation section is skipped)")
 with tempfile.TemporaryDirectory() as tmp:
-    root = Path(tmp)
-    (root / "questions").mkdir()
-    (root / "classes.yaml").write_text(textwrap.dedent("""
-        classes:
-          - {id: a, name: A, trained: true, yolox_index: 0}
-          - {id: b, name: B, trained: true, yolox_index: 0}
-          - {id: c, name: C, trained: true}
-    """))
-    reg = load_registry(root)
-    check("a duplicate yolox_index demotes the later class",
-          reg.yolox_class_names() == ("A",), f"got {reg.yolox_class_names()}")
-    check("the duplicate is reported, not swallowed",
-          any("claimed by both" in w for w in reg.warnings), str(reg.warnings))
-    check("trained: true with no yolox_index is reported",
-          any("no yolox_index" in w for w in reg.warnings), str(reg.warnings))
+  if HAVE_YAML:
+      root = Path(tmp)
+      (root / "questions").mkdir()
+      (root / "classes.yaml").write_text(textwrap.dedent("""
+          classes:
+            - {id: a, name: A, trained: true, yolox_index: 0}
+            - {id: b, name: B, trained: true, yolox_index: 0}
+            - {id: c, name: C, trained: true}
+      """))
+      reg = load_registry(root)
+      check("a duplicate yolox_index demotes the later class",
+            reg.yolox_class_names() == ("A",), f"got {reg.yolox_class_names()}")
+      check("the duplicate is reported, not swallowed",
+            any("claimed by both" in w for w in reg.warnings), str(reg.warnings))
+      check("trained: true with no yolox_index is reported",
+            any("no yolox_index" in w for w in reg.warnings), str(reg.warnings))
 
 print("\nboth backends produce the same downstream shape")
 from pipeline.schemas import Detection, DetectionStageResult, SOURCE_MODEL  # noqa: E402

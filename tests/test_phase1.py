@@ -104,8 +104,21 @@ check("no two questions share a system prompt", not _shared, "; ".join(_shared))
 # would be unreachable from the domain dropdown in demo_dash_pipeline.py.
 _orphans = [qid for qid, q in pq.QUESTIONS.items() if q.domain not in pq.REGISTRY.domains]
 check("every question's domain exists", not _orphans, str(_orphans))
-check("the config tree loaded without warnings", not pq.REGISTRY.warnings,
-      "; ".join(pq.REGISTRY.warnings))
+# Only meaningful when config/ can actually be read. Without pyyaml the
+# registry deliberately falls back to the built-ins and warns about it, which
+# is correct behaviour, not a broken tree.
+try:
+    import yaml as _yaml  # noqa: F401
+    _HAVE_YAML = True
+except ImportError:
+    _HAVE_YAML = False
+if _HAVE_YAML:
+    check("the config tree loaded without warnings", not pq.REGISTRY.warnings,
+          "; ".join(pq.REGISTRY.warnings))
+else:
+    check("without pyyaml the registry falls back and says so",
+          bool(pq.REGISTRY.warnings) and "built-in" in pq.REGISTRY.source,
+          pq.REGISTRY.source)
 check("dropdown choices are (label, id) pairs",
       pq.QUESTION_CHOICES == [(q.label, q.id) for q in pq.QUESTIONS.values()])
 

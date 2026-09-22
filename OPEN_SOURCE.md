@@ -8,7 +8,7 @@ Versions are what is actually installed on the demo host (FALCONPRD), not what
 | Software | Version | Licence | Used for |
 |---|---|---|---|
 | **Python** | 3.12.0 | PSF-2.0 | Runtime for everything below |
-| **Dash** | 4.4.1 | MIT | The demo UI (`demo_dash.py`, `demo_dash_yolox.py`, `demo_dash_modes.py`) |
+| **Dash** | 4.4.1 | MIT | The demo UIs (`demo_dash.py`, `demo_dash_yolox.py`, `demo_dash_modes.py`, `demo_dash_pipeline.py`) |
 | **Plotly** | 6.9.0 | MIT | Dash dependency (components, rendering) |
 | **Flask** | 3.1.3 | BSD-3-Clause | Dash's web server |
 | **NumPy** | 2.5.3 | BSD-3-Clause | Array maths across all three stages |
@@ -16,8 +16,26 @@ Versions are what is actually installed on the demo host (FALCONPRD), not what
 | **Pillow** | 11.3.0 | MIT-CMU (HPND) | EXIF-correct image loading |
 | **pandas** | 2.3.3 | BSD-3-Clause | CSV export, results tables |
 | **Requests** | 2.34.2 | Apache-2.0 | HTTP client to the VLM server (direct or via the proxy) |
-| **PyYAML** | 6.0.1 | MIT | Stores mode 3's tuned system prompts (`config/prompts.yaml`) |
+| **PyYAML** | 6.0.1 | MIT | The question registry (`config/domains.yaml`, `classes.yaml`, `questions/*.yaml`) and mode 3's tuned prompts (`config/prompts.yaml`) |
 | **Gradio** | 5.50.0 | Apache-2.0 | The earlier UI, kept as a fallback |
+
+## Stage 2b — OCR
+
+| Software | Version | Licence | Used for |
+|---|---|---|---|
+| **RapidOCR** | 2.x | Apache-2.0 | ONNX runner for the PP-OCR detection, classification and recognition models |
+| **PP-OCRv6** (`PP-OCRv6_det_tiny.onnx`, `PP-OCRv6_rec_tiny.onnx`) | — (1.7 MB + 4.3 MB) | Apache-2.0 | Text detection and recognition; converted from PaddleOCR, committed under `models/ocr/` |
+| **ONNX Runtime** | 1.29.0 | MIT | Runs both models on CPU (shared with stage 1) |
+
+PP-OCRv6 comes from PaddlePaddle's PaddleOCR, Apache-2.0. The ONNX files here
+are the same ones handed to the Android team, so the demo and the edge device
+read with identical weights. The shared angle classifier
+(`ch_ppocr_mobile_v2.0_cls_mobile.onnx`, also Apache-2.0) is **not** included —
+see `models/ocr/README.md` for what that costs.
+
+RapidOCR pulls `omegaconf`, which pulls `antlr4-python3-runtime` (BSD-3-Clause)
+— an sdist that does not build against some distro-patched setuptools. Build it
+in a clean venv if the resolve fights you.
 
 ## Stage 1 — quality gate
 

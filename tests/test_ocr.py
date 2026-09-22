@@ -41,6 +41,16 @@ from pipeline.question_types import (NumericRule, OCRSpec, Question,  # noqa: E4
                                      build_ocr_block, build_user_template,
                                      render_user_prompt)
 from pipeline.questions import get_question                           # noqa: E402
+
+try:
+    import yaml  # noqa: F401
+    HAVE_YAML = True
+except ImportError:
+    # Without pyyaml the registry serves two built-in Site Safety questions and
+    # none of the four that use OCR exists. Sections that name them by id would
+    # raise KeyError - a crash rather than a reported failure, which breaks the
+    # "every suite prints N passed, M failed" convention this repo runs on.
+    HAVE_YAML = False
 from pipeline.schemas import (Detection, OCRLine, OCRStageResult,     # noqa: E402
                               OCR_FROM_BOXES, OCR_FROM_IMAGE, OCR_SKIPPED,
                               SOURCE_ANNOTATION)
@@ -269,49 +279,52 @@ check("an absent OCR read collapses cleanly",
 
 print("\nmode 3 never receives an OCR block, by design")
 import pipeline.questions as pq  # noqa: E402
-for qid in ("temp_within_limit", "spd_class_b_installed"):
-    leg = pq.render_leg_user(pq.get_question(qid), "answer")
-    check(f"{qid}: the mode-3 answer leg has no OCR block",
-          "Text read from the image" not in leg and "{ocr_block}" not in leg)
-check("the mode-3 legs take no ocr argument at all",
-      "ocr" not in pq.render_leg_user.__code__.co_varnames)
+if not HAVE_YAML:
+    print("  (pyyaml absent - the questions that use OCR do not exist; skipped)")
+if HAVE_YAML:
+  for qid in ("temp_within_limit", "spd_class_b_installed"):
+      leg = pq.render_leg_user(pq.get_question(qid), "answer")
+      check(f"{qid}: the mode-3 answer leg has no OCR block",
+            "Text read from the image" not in leg and "{ocr_block}" not in leg)
+  check("the mode-3 legs take no ocr argument at all",
+        "ocr" not in pq.render_leg_user.__code__.co_varnames)
 
-# A question whose system prompt promises OCR evidence must not send that same
-# prompt in the one mode where the evidence never arrives. This was a real bug:
-# all four OCR questions told mode 3 that "text read from the image by an OCR
-# engine may be supplied to you", and nothing ever supplied it.
-for qid in ("temp_within_limit", "earthing_value_egb",
-            "spd_class_b_installed", "spd_class_c_installed"):
-    q = pq.get_question(qid)
-    m3 = pq.default_leg_system(q, "answer")
-    check(f"{qid}: modes 1-2 and mode 3 get DIFFERENT system prompts",
-          q.system_prompt != m3)
-    check(f"{qid}: modes 1-2 are told OCR text may be supplied",
-          "may be supplied" in q.system_prompt)
-    check(f"{qid}: mode 3 is NOT promised evidence it never gets",
-          "may be supplied" not in m3, m3[:120])
-    check(f"{qid}: mode 3 is told to read the text itself",
-          "No OCR output" in m3, m3[:120])
-    check(f"{qid}: mode 3's prompt is not blank", bool(m3.strip()))
-for qid in ("gps_antenna", "hazard_warning", "earth_pit_condition"):
-    q = pq.get_question(qid)
-    check(f"{qid}: no OCR stage, so one prompt still serves both modes",
-          q.system_prompt == pq.default_leg_system(q, "answer"))
-check("every question that carries OCR also carries the mode-3 variant",
-      all(q.system_prompt_no_ocr.strip()
-          for q in pq.QUESTIONS.values() if q.ocr.enabled),
-      str([q.id for q in pq.QUESTIONS.values()
-           if q.ocr.enabled and not q.system_prompt_no_ocr.strip()]))
-# Blank-but-present is trap 9 again: the server skips a falsy system turn.
-from pipeline.question_types import Question as _Q  # noqa: E402
-try:
-    _Q(id="t", label="t", system_prompt="S",
-       user_template="{detection_block}{output_contract}",
-       answer_semantics="", relevant_classes=[], system_prompt_no_ocr="   ")
-    raised = False
-except ValueError:
-    raised = True
-check("a whitespace-only mode-3 prompt is rejected at construction", raised)
+  # A question whose system prompt promises OCR evidence must not send that same
+  # prompt in the one mode where the evidence never arrives. This was a real bug:
+  # all four OCR questions told mode 3 that "text read from the image by an OCR
+  # engine may be supplied to you", and nothing ever supplied it.
+  for qid in ("temp_within_limit", "earthing_value_egb",
+              "spd_class_b_installed", "spd_class_c_installed"):
+      q = pq.get_question(qid)
+      m3 = pq.default_leg_system(q, "answer")
+      check(f"{qid}: modes 1-2 and mode 3 get DIFFERENT system prompts",
+            q.system_prompt != m3)
+      check(f"{qid}: modes 1-2 are told OCR text may be supplied",
+            "may be supplied" in q.system_prompt)
+      check(f"{qid}: mode 3 is NOT promised evidence it never gets",
+            "may be supplied" not in m3, m3[:120])
+      check(f"{qid}: mode 3 is told to read the text itself",
+            "No OCR output" in m3, m3[:120])
+      check(f"{qid}: mode 3's prompt is not blank", bool(m3.strip()))
+  for qid in ("gps_antenna", "hazard_warning", "earth_pit_condition"):
+      q = pq.get_question(qid)
+      check(f"{qid}: no OCR stage, so one prompt still serves both modes",
+            q.system_prompt == pq.default_leg_system(q, "answer"))
+  check("every question that carries OCR also carries the mode-3 variant",
+        all(q.system_prompt_no_ocr.strip()
+            for q in pq.QUESTIONS.values() if q.ocr.enabled),
+        str([q.id for q in pq.QUESTIONS.values()
+             if q.ocr.enabled and not q.system_prompt_no_ocr.strip()]))
+  # Blank-but-present is trap 9 again: the server skips a falsy system turn.
+  from pipeline.question_types import Question as _Q  # noqa: E402
+  try:
+      _Q(id="t", label="t", system_prompt="S",
+         user_template="{detection_block}{output_contract}",
+         answer_semantics="", relevant_classes=[], system_prompt_no_ocr="   ")
+      raised = False
+  except ValueError:
+      raised = True
+  check("a whitespace-only mode-3 prompt is rejected at construction", raised)
 
 print("\nthe engine module reports what is actually on disk")
 present = ocr_engine.available_variants()
@@ -335,7 +348,7 @@ try:
 except Exception:
     HAVE_ENGINE = False
 
-if HAVE_ENGINE:
+if HAVE_ENGINE and HAVE_YAML:
     print("\nthe real engine, against the committed ONNX files")
     from pipeline.config import default_config  # noqa: E402
 
@@ -346,7 +359,7 @@ if HAVE_ENGINE:
     _cv2.rectangle(img, (150, 120), (560, 300), (15, 15, 15), -1)
     _cv2.putText(img, "33.5 C", (185, 240), _cv2.FONT_HERSHEY_SIMPLEX, 2.4,
                  (80, 255, 120), 6)
-    real_q = get_question("temp_within_limit")
+    real_q = get_question("temp_within_limit") if HAVE_YAML else None
     r = stage2b_ocr.run(img, real_q, [], cfg=cfg)
     check("the whole-frame read finds the display", bool(r.lines), r.headline)
     check("the reading is parsed", r.numeric is not None and r.numeric["value"] == 33.5,
@@ -358,7 +371,8 @@ if HAVE_ENGINE:
     check("box and frame agree on the number",
           box_r.numeric["value"] == r.numeric["value"])
 else:
-    print("\n(rapidocr or a real cv2 is absent - the live-engine section is skipped)")
+    print("\n(rapidocr, a real cv2 or pyyaml is absent - the live-engine section "
+          "is skipped)")
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -8,33 +8,62 @@ Three tools that were built separately — a quality gate, an object detector an
 a vision-model Q&A leg — run as one pipeline here.
 
 ```
-photograph ──▶ 1. Quality gate ──▶ 2. Detection ──▶ 3. Answer ──▶  YES / NO / UNKNOWN
-               MM-IQA + u2netp     YOLOX-S           Qwen3-VL        + reasoning
+photograph ─▶ 1. Quality gate ─▶ 2. Detection ─▶ 2b. OCR ─▶ 3. Answer ─▶ YES / NO / UNKNOWN
+              MM-IQA + u2netp    YOLOX-S         PP-OCRv6    Qwen3-VL     + reasoning
+                                                 (4 questions)
 ```
 
 A photograph that fails the quality gate stops there — an inspection decision
 made from an unusable photo is worse than no decision. Modes 2 and 3 argue with
 that premise; see below.
 
-## The two questions
+## The questions
 
-| id | Question | YES means |
+Sixteen, in two domains. Each carries its own system prompt, answer semantics
+and relevant detector classes.
+
+| Domain | Questions | Trained detector classes |
 |---|---|---|
-| `hazard_warning` | Is a hazardous-warning sign present? | a hazard/warning/danger sign or safety placard is visible |
-| `gps_antenna` | Is the GPS antenna open to the sky? | the antenna's upward view is clear |
+| **Site Safety** | 2 — hazard signage, GPS antenna sky view | both |
+| **Infra** | 14 — lightning arrestor, enclosure condition inside and out, Roxtec sealing, Class B/C SPD installed and active, rectifier modules, temperature sensor placement and reading, earth pit and earthing value, DCDB cable tagging | none yet |
 
-Each carries its own system prompt, answer semantics and relevant detector
-classes, in `app/pipeline/questions.py`.
+Four of the Infra questions carry an **OCR stage**: the two SPD "installed"
+questions, where the class marking printed on the module body is what
+distinguishes a Class B module from a Class C one, and the two device readings
+(temperature ≤ 35 °C, earthing < 2 Ω), where the answer is a number on a
+display.
 
-## Three UIs, three ports
+None of the Infra object classes has trained YOLOX weights yet, so stage 2 runs
+on annotation sidecars for them and says so on the card. That matters: "the
+detector found nothing" and "nothing was ever trained to find this" look
+identical, and only one is evidence of absence.
+
+### Adding or removing one
+
+Questions, domains and object classes are **YAML under `config/`** — no Python.
+`PLUGINS.md` is the procedure; the **Reload config/** button on 7873 picks up
+an edit without a restart.
+
+```
+config/domains.yaml       the domain dropdown
+config/classes.yaml       every object class, trained or not
+config/questions/*.yaml   the questions, one file per domain
+```
+
+## Four UIs, four ports
 
 All are Dash apps and all can run at once.
 
-| App | Port | Stage 2 | Status |
+| App | Port | What it is for | Status |
 |---|---|---|---|
-| `app/demo_dash.py` | 7870 | human annotation `.txt` sidecars | **frozen** — the known-good fallback |
-| `app/demo_dash_yolox.py` | 7871 | trained YOLOX-S checkpoint | superseded |
-| `app/demo_dash_modes.py` | 7872 | three modes, switchable | **the current demo** |
+| `app/demo_dash.py` | 7870 | annotation sidecars, one mode | **frozen** — the known-good fallback |
+| `app/demo_dash_yolox.py` | 7871 | trained detector, one mode | superseded |
+| `app/demo_dash_modes.py` | 7872 | three modes over a **folder** of photographs | current — the batch screen |
+| `app/demo_dash_pipeline.py` | 7873 | domain → question → **one photograph** → three modes | current — the per-photograph screen |
+
+7872 and 7873 are both current and answer different questions. Running twenty
+photographs to find the two where the modes disagree is a different job from
+examining one closely, and only 7873 has the domain selector and the OCR panel.
 
 ### The three modes
 
@@ -42,7 +71,13 @@ All are Dash apps and all can run at once.
 |---|---|---|---|
 | Quality | hard gate | advisory | judged by the model |
 | Detection | YOLOX-S boxes | YOLOX-S boxes | presence in words, no boxes |
+| OCR | PP-OCRv6 | PP-OCRv6 | **none — the model reads the text itself** |
 | A blurry photo whose sign is clearly detected | **dropped** | **answered** | answered if the model calls it usable |
+
+Mode 3 not running OCR is the point, not an omission. On a device reading, its
+answer is the model reading a seven-segment display unaided, next to two modes
+handed PP-OCRv6's transcription — which is the most direct measure of the
+model's competence this demo can produce.
 
 One run fills all three; switching mode re-reads results rather than
 re-running, so the same photographs can be argued three ways in front of an
@@ -66,19 +101,31 @@ python -c "import _ctypes; print('ok')"     # do this before pip install
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements-demo.txt
 
-# Check the machine before trusting it
-python tools/preflight.py --port 7872
+# Check the machine before trusting it. Prints how many questions loaded and
+# from where, which OCR models are present, and every config warning.
+python tools/preflight.py --port 7873
 
-# Every test (459 assertions, nine suites)
+# Every test (711 assertions, twelve suites; 717 with every dependency present)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
-python app/demo_dash_modes.py      # http://<host>:7872
+python app/demo_dash_pipeline.py   # http://<host>:7873
 ```
 
 Two things are **not** in this repository and must be copied in — the trained
 checkpoint (`models/best_ckpt.pth`, ~70 MB) and the YOLOX network definition
 (`app/vendor/yolox/models/`, which upstream's `.gitignore` excluded). See
-`COPY_FROM_AISERVER.md` and `YOLOX_SETUP.md`.
+`COPY_FROM_AISERVER.md` and `YOLOX_SETUP.md`. The demo runs without either, on
+annotation sidecars, which is how the Infra questions run regardless.
+
+The OCR models **are** committed (`models/ocr/`, ~6 MB). RapidOCR answers a
+missing model path by downloading one, so on an offline host an absent file is
+a hang rather than an error. Two are missing from the set — the angle
+classifier and the `small` variant; `models/ocr/README.md` records what that
+costs and how to drop them in. Confirm the models load with the network down:
+
+```bash
+python tools/preflight.py --offline-check --skip-gpu
+```
 
 Then press **Load / check model** in the UI. It reports in one line whether
 u2netp is present, whether the detector loaded with the right class names, and
@@ -113,6 +160,7 @@ looked is the one thing this demo will not do.
 | `YOLOX_SETUP.md`, `COPY_FROM_AISERVER.md` | the detector, and the two files git does not carry |
 | `PROXY.md` | reaching the model through the proxy |
 | `MODES.md` | what the three modes argue, and what they cost |
+| `PLUGINS.md` | **adding or removing a question, domain or object class** |
 | `SERVICE.md` | running it under systemd |
 | `FROZEN.md` | the pinned fallback, and how to restore it |
 | `OPEN_SOURCE.md` | every open-source component, version and licence |
@@ -122,16 +170,20 @@ looked is the one thing this demo will not do.
 ## Repository layout
 
 ```
+config/                 THE QUESTIONS - domains, classes, questions (see PLUGINS.md)
 app/
-  demo_dash*.py         the three UIs
-  pipeline/             schemas, config, questions, the three stages, modes
+  demo_dash*.py         the four UIs
+  pipeline/             schemas, config, the registry, the stages, modes
+    registry.py         reads config/ into domains, classes and questions
+    question_types.py   the Question dataclass and the pure prompt helpers
+    stage2b_ocr.py      the OCR stage; ocr_engine.py drives PP-OCRv6
   vendor/yolox/         vendored YOLOX utils (Apache 2.0)
   quality_check.py      vendored from the original quality tool
   foreground_segmentation.py
 tools/                  preflight + one smoke script per stage
-tests/                  nine standalone suites - no pytest, no build step
-deploy/                 systemd unit and an env template
-models/                 u2netp.onnx (committed); best_ckpt.pth (copied in)
+tests/                  twelve standalone suites - no pytest, no build step
+deploy/                 systemd units and an env template
+models/                 u2netp.onnx and ocr/*.onnx (committed); best_ckpt.pth (copied in)
 ```
 
 Run outputs land under `demo_runs/<run_id>/`:
@@ -139,6 +191,7 @@ Run outputs land under `demo_runs/<run_id>/`:
 ```
 quality/          u2netp foreground boxes, one per photograph
 detection/        detector boxes, one per photograph with a detection
+ocr/              magenta text-line boxes, for the questions that use OCR
 <mode>/           pipeline_results.csv + results.json, one folder per mode
 vlm_only/images/  mode 3's plain EXIF-corrected copies (no boxes - u2netp
                   never ran in that mode, so drawing one would be a lie)
@@ -156,7 +209,9 @@ stage" over architectural purity, and several compromises are deliberate —
 Verified end to end on the demo hosts: stage 1 ~2s per photograph, YOLOX-S
 2.4–6.7s on CPU with boxes matching the human annotations at 0.89–0.94, and the
 model answering in 0.21–0.48s server-side with reasoning that cites real sign
-text.
+text. Stage 2b adds roughly 60 ms per detected box or ~340 ms for a whole
+frame — the gap is `Det.limit_type="max"` on crops, and losing that setting
+turns a small crop into a ~3.5 s read.
 
 `instant_graph_mcp_server_v2_4_1.py` at the repo root is unrelated earlier
 work.

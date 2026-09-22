@@ -15,7 +15,11 @@ source demo_venv/bin/activate
 pip download --no-deps requests -d /tmp/pipcheck && echo "PyPI OK" || echo "NO PyPI ROUTE"
 ```
 
-**No route?** Skip to *Appendix: air-gapped install*.
+**No route?** Skip to *Appendix: air-gapped install*. Note that `u2netp.onnx`
+and the PP-OCRv6 files under `models/ocr/` are committed precisely so that an
+air-gapped host needs no model download — both rembg and RapidOCR answer a
+missing model file by fetching one, which on this box is a hang rather than an
+error.
 
 ---
 
@@ -26,11 +30,16 @@ from those scripts ships. Copy them into `app/` next to `pipeline/`:
 
 ```
 integrated_pipeline/
+  config/                        <- IN GIT: the questions, domains and classes
+    domains.yaml  classes.yaml  questions/*.yaml
   app/
     quality_check.py             <- COPY IN
     foreground_segmentation.py   <- COPY IN
     pipeline/
-      schemas.py  config.py  questions.py  stage1_quality.py
+      schemas.py  config.py  registry.py  questions.py  stage1_quality.py
+  models/
+    u2netp.onnx                  <- IN GIT
+    ocr/*.onnx                   <- IN GIT (PP-OCRv6, ~6 MB)
 ```
 
 `foreground_segmentation.py` computes `MODELS_DIR` as

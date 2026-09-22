@@ -8,6 +8,140 @@ Newest first. Dates are when the decision was made, not when it was written up.
 
 ---
 
+## 2026-09-22 · The questions are YAML, and the loader never raises
+
+**Decision.** Questions, domains and object classes move out of
+`app/pipeline/questions.py` into `config/domains.yaml`, `config/classes.yaml`
+and `config/questions/*.yaml`, read by `app/pipeline/registry.py`. Every
+problem the loader can survive becomes a warning the UI prints, and the entry
+that caused it is dropped. `questions.py` stays as the import surface, so every
+existing `from pipeline.questions import ...` still resolves.
+
+**Why.** Adding a question used to mean editing four places in one file — the
+`Question` literal, `SUBJECTS`, `QUESTION_TEXT`, and the class names it matches
+on. Forgetting either of the middle two did not error; it silently downgraded
+mode 3 to generic fallback wording. At two questions that was survivable. At
+sixteen it is not, and the people most likely to add a seventeenth are not
+engineers.
+
+Loading is tolerant because a malformed file must not take the demo down five
+minutes before it runs. The two things it will not survive — a tree with no
+questions at all, and a question with a blank system prompt — fall back to
+built-ins loudly, because the first leaves nothing to demo and the second fails
+*silently at the server*, which is the failure this repo keeps legislating
+against.
+
+**What it costs.** `pyyaml` stops being a soft dependency: without it the
+registry falls back to two built-in questions and the Infra domain does not
+exist. The demo still starts, and says why in every status line, but it is a
+much smaller demo. `registry.py` and `config.py` also now hold literal copies
+of the trained class names as that fallback, which is a second source of truth
+— pinned against the YAML by `tests/test_yolox.py`, because a drifted fallback
+relabels every detection with nothing raising.
+
+---
+
+## 2026-09-22 · `yolox_index` is written per class, not inferred from list order
+
+**Decision.** A trained entry in `config/classes.yaml` carries an explicit
+`yolox_index`. `PipelineConfig.yolox_class_names` is derived by sorting on it.
+Duplicates, gaps and a `trained: true` with no index each demote the class to
+untrained, with a warning.
+
+**Why.** YOLOX stores no class names in a checkpoint, so that file is the only
+record of them, and a wrong ORDER does not error — it puts a confident wrong
+label on screen *and* into the VLM prompt as evidence. That has already
+happened here once: the detector was localising hazard signs correctly and
+calling them GPS antennas. Position in a YAML list is far too easy to change by
+accident; reordering two entries for readability would have silently relabelled
+every detection.
+
+**What it costs.** Two fields to keep in step instead of one, and a rule that
+looks like ceremony until you have hit the failure it prevents. `PLUGINS.md`
+carries the reason next to the rule for that reason.
+
+---
+
+## 2026-09-22 · OCR produces evidence; the model still answers
+
+**Decision.** Stage 2b reads text with PP-OCRv6 and puts it into the prompt
+behind a hedge telling the model to prefer the image. Where a question carries
+a numeric rule, the threshold check goes in the same way. **The pipeline never
+answers a question from the OCR output**, even when the output is a number and
+the question is a threshold.
+
+**Why.** It is tempting to let `33.5 <= 35` settle "is the temperature within
+35 °C". It must not, because the rule takes the first number its pattern
+matches and cannot see three things that change the answer:
+
+- **the range multiplier** — `1.85` on a 20 Ω range is 1.85 ohms; the same
+  digits under a kΩ indicator are not,
+- **a set-point versus a measurement** — on `SET 22 C ACT 38.0 C` the rule
+  takes 22, and the real reading fails the limit,
+- **°F versus °C**, which OCR reports identically when the unit is
+  silk-screened on the bezel where no camera sees it.
+
+A confident wrong number *with a verdict attached* is worse than no number. So
+the rule's output is one advisory line, the card shows **which token** was
+matched rather than only the value, and the verdict is never styled as an
+answer chip. Two of those three failure modes are pinned as passing assertions
+in `tests/test_ocr.py` — as known limits, so they stay visible instead of being
+rediscovered live.
+
+The confidence floor runs **before** both the prompt and the rule, so a
+0.11-confidence misread of `1B5` cannot become "185 ohms, outside the limit".
+
+**What it costs.** On a clean display where OCR is right and the model is
+wrong, the pipeline answers wrongly and the correct number is sitting on the
+card. That is the accepted trade: the demo's one non-negotiable is that it does
+not assert something no model concluded.
+
+---
+
+## 2026-09-22 · Mode 3 runs no OCR, and gets its own system prompt
+
+**Decision.** Stage 2b runs in modes 1 and 2 and never in mode 3. A question
+that uses OCR carries a second system prompt, `system_prompt_no_ocr`, which
+mode 3's answer leg sends instead of the usual one.
+
+**Why.** Mode 3's argument is that one model seeing the whole photograph judges
+more coherently than components that each see a slice. Handing it PP-OCRv6's
+transcription would make it answer better and tell us nothing — and "can this
+model read a seven-segment display on an edge device" is the question anyone
+evaluating this pipeline is actually asking. The asymmetry *is* the measurement.
+
+The second prompt exists because the first one lies in that mode. All four OCR
+questions tell the model that OCR text "may be supplied to you as advisory
+evidence", and in mode 3 nothing ever supplies it. Found by running the app and
+reading the Prompts tab, not by a test — the mode had been mis-framed since the
+stage was added.
+
+**What it costs.** Two prompts to keep in step per OCR question, and the
+temptation to fix a mode-3 wrong answer by feeding it the OCR block. Preflight
+warns about any OCR question missing the variant; `tests/test_ocr.py` asserts
+the two prompts differ and that mode 3's never promises evidence.
+
+---
+
+## 2026-09-22 · Commit the OCR models, and omit the classifier rather than point at it
+
+**Decision.** `models/ocr/*.onnx` are committed. The angle classifier did not
+ship with them, and `_get_engine()` omits the `Cls.model_path` key entirely
+rather than passing a path to a file that does not exist.
+
+**Why.** The same reason `u2netp.onnx` is committed, with more force: RapidOCR
+answers a missing model path by **downloading** one. On a demo host with no
+route out that is a hang in front of an audience, not an error anyone can read.
+Omitting the key is the only way to say "there is no classifier" without
+triggering that. `preflight.py --offline-check` builds both engines with the
+network denied, which is the only test that actually proves it.
+
+**What it costs.** ~6 MB in git, and text rotated 180° reads worse. Upright
+text is unaffected. `models/ocr/README.md` records the hashes and what dropping
+the missing files in would restore.
+
+---
+
 ## 2026-09-18 · Run the demo under systemd, on Werkzeug
 
 **Decision.** A systemd unit (`deploy/fieldops-demo-modes.service`) running
@@ -217,9 +351,22 @@ message names the cause — the empty registry, the blank system prompt, the
 missing `yolox/models`, the proxy 404 that means the wrong transport.
 
 **Tests run without heavy dependencies.** `cv2`, `dash` and `requests` are
-stubbed; `torch`, `rembg` and `pandas` are never imported. Verified by running
-every suite with all six blocked. `pyyaml` is the single exception — two suites
-assert saving and parsing that genuinely need it.
+stubbed; `torch`, `rembg`, `rapidocr` and `pandas` are never imported. Verified
+by running every suite with all of them blocked. `pyyaml` is the exception —
+two suites assert saving and parsing that genuinely need it, and the registry
+falls back to built-ins without it.
+
+A suite may carry a section that needs a real dependency, provided it
+**announces itself when skipped** and the stub is conditional. `test_ocr.py`
+stubs `cv2` only when a real one is absent, so its live-engine section can run
+against the committed ONNX files where they can be loaded, and is skipped with
+a printed line where they cannot.
+
+**Three different nothings are never conflated.** A stage that could not run,
+a stage that ran and found nothing, and a stage nobody asked to run are three
+separate states with three separate renderings — only the first is a problem
+with the host. The same rule that separates "the detector found nothing" from
+"nothing was ever trained to find this".
 
 **Tests must not depend on their host.** Clear the environment you read;
 force the absence you assert.

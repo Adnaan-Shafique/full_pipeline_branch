@@ -18,10 +18,16 @@ requests>=2.31
 # Both wheels provide the same `cv2` module, so quality_check.py cannot tell.
 opencv-python-headless>=4.9
 
-# Mode 3's tuned system prompts are stored as YAML (config/prompts.yaml).
-# PromptStore degrades to the built-in prompts and reports why when this is
-# missing, so it is a soft dependency - the demo runs without it, just without
-# the ability to save an edited prompt.
+# pyyaml carries TWO things now, and its status has changed accordingly.
+#
+# It always held mode 3's tuned system prompts (config/prompts.yaml), which was
+# a soft dependency: PromptStore degrades to the built-ins and says why.
+#
+# It now ALSO holds the question registry - config/domains.yaml, classes.yaml
+# and questions/*.yaml. Without it the registry cannot read any of them and
+# falls back to the two built-in Site Safety questions, naming the reason in
+# every UI's status line. The demo still starts; it just has 2 questions instead
+# of 16 and no Infra domain at all. Treat this as required.
 pyyaml>=6.0
 
 # ── UI ───────────────────────────────────────────────────────────────────────
@@ -40,6 +46,24 @@ gradio>=4.44,<6
 # only_mask=True. If the resolve fights you, see SETUP.md for the slim path.
 rembg>=2.0.57
 onnxruntime>=1.17
+
+# ── Stage 2b: OCR ────────────────────────────────────────────────────────────
+# PP-OCRv6 through RapidOCR's onnxruntime backend, over the ONNX files committed
+# in models/ocr/. Needed by the four questions whose YAML sets ocr.enabled:
+# the two SPD "installed" questions and the two device readings.
+#
+# SOFT, like rembg is not: without it stage 2b is skipped, the UI says so in
+# one line, and those four questions are answered from the image alone. That is
+# a legitimate way to run the demo, just a weaker one - so preflight warns
+# rather than fails.
+#
+# rapidocr pulls omegaconf, which pulls antlr4-python3-runtime - an sdist that
+# does NOT build against some distro-patched setuptools (it fails on
+# `install_layout`). If that is what the resolve hits, build it inside a clean
+# venv rather than against the system interpreter.
+#
+# onnxruntime is already required above for rembg; RapidOCR uses the same one.
+rapidocr>=2.0
 
 # ── Trained detector (app/demo_dash_yolox.py only) ───────────────────────────
 # Not needed by the annotation-file version. CPU wheels are the right choice
