@@ -6,156 +6,66 @@ is a spatial-occlusion judgement about the scene ABOVE the object. One generic
 persona does both worse than two specific ones, so swapping the dropdown swaps
 the entire prompt pair with it.
 
-Adding a third question tomorrow = adding one Question entry below. No other
-file changes.
+── Where the questions now live ─────────────────────────────────────────────
+They used to be Question(...) literals in this file. They are now YAML, under
+config/questions/, loaded by pipeline/registry.py:
 
-The prompt text lives here as plain string constants rather than scattered
-f-strings so a non-engineer can tune wording between rehearsals without reading
-pipeline code.
+    config/domains.yaml          the domain dropdown
+    config/classes.yaml          every detector class, trained or not
+    config/questions/*.yaml      the questions
 
-Pure stdlib - importable and testable with nothing installed.
+Adding a question is a YAML entry; no Python changes. Removing one is deleting
+that entry. Adding or removing a detector class is an entry in classes.yaml,
+from which PipelineConfig.yolox_class_names is derived. This module is now the
+stable import surface over that registry, so every existing import of it -
+`from pipeline.questions import get_question, select_relevant, QUESTIONS` -
+still resolves exactly as before.
+
+If pyyaml is missing or config/ has been deleted, the registry falls back to
+two built-in Site Safety questions and says why in `REGISTRY.warnings`, which
+the UI prints. The demo degrades; it does not fail to import.
+
+The dataclass and the pure prompt helpers live in question_types.py, so the
+registry can build Questions without importing this module back. They are
+re-exported here; import them from here.
+
+Pure stdlib apart from the registry's optional `import yaml`.
 """
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from .question_types import (  # noqa: F401  - re-exported, this is the public surface
+    ANSWER_NO, ANSWER_UNKNOWN, ANSWER_YES, COMPARATORS, DETECTION_BLOCK_PREFIX,
+    OCR_BLOCK_PREFIX, OCR_NUMERIC_PREFIX, OCR_SCOPES, OCR_SCOPE_BOXES,
+    OCR_SCOPE_BOXES_THEN_IMAGE, OCR_SCOPE_IMAGE, OUTPUT_CONTRACT, NumericRule,
+    OCRSpec, Question, VALID_ANSWERS, _normalise, build_detection_block,
+    build_ocr_block, build_user_template, normalise, render_user_prompt,
+    select_relevant)
+from .registry import get_registry, load_registry  # noqa: F401
 
-# ─────────────────────────────── Shared contract ─────────────────────────────
-# Appended to every question so the parser only ever sees one shape.
-OUTPUT_CONTRACT = (
-    'Respond with JSON only, no markdown fence:\n'
-    '{"answer": "yes" | "no" | "unknown", '
-    '"reasoning": "<2-3 sentences citing the specific visual evidence in the image>"}'
-)
+# ─────────────────────────────── The registry ────────────────────────────────
+# Module-level names kept for compatibility: QUESTIONS and QUESTION_CHOICES were
+# the public surface before the YAML move and are imported directly in several
+# places. They are snapshots taken at import; use refresh() after an edit, which
+# is what the UI's Reload button calls.
 
-# Injected only when detections exist, otherwise the empty string. The
-# "advisory only" wording is load-bearing: a confident-looking 0.91 presented as
-# ground truth will anchor the model's answer, and in stub mode that number is a
-# deterministic hash, not a measurement.
-DETECTION_BLOCK_PREFIX = (
-    "Object detector output (advisory only - it may be incomplete or wrong; "
-    "trust the image over this list): "
-)
-
-ANSWER_YES = "yes"
-ANSWER_NO = "no"
-ANSWER_UNKNOWN = "unknown"
-VALID_ANSWERS = (ANSWER_YES, ANSWER_NO, ANSWER_UNKNOWN)
-
-
-# ─────────────────────────────── System prompts ──────────────────────────────
-
-HAZARD_WARNING_SYSTEM = (
-    "You are a site-safety inspector reviewing photographs of telecom equipment "
-    "installations. Your task is to determine whether a hazardous-warning sign, "
-    "label, or placard is visible in the photograph - for example high-voltage "
-    "warnings, electrical-hazard symbols, RF-radiation warnings, danger/caution "
-    "placards, or equivalent safety signage. Judge only from what is actually "
-    "visible; do not infer that signage exists because the equipment type would "
-    "normally require it. If the image is too unclear, cropped, or distant to "
-    'tell, answer "unknown". Respond with JSON only.'
-)
-
-GPS_ANTENNA_SYSTEM = (
-    "You are a telecom installation inspector reviewing photographs of GPS "
-    "antennas mounted at cell sites. A GPS antenna functions correctly only when "
-    "it has a clear, unobstructed view of the open sky above it. Your task is to "
-    "judge, from the photograph, whether the antenna's upward view is clear. Pay "
-    "attention to what sits directly above and around the antenna: roof "
-    "overhangs, canopies, walls, tree canopy, cable trays, other antennas or "
-    "equipment, or an indoor/sheltered location. Do not judge the antenna's "
-    "cabling, cosmetic condition, or brand. If the region above the antenna is "
-    'not visible in the frame, answer "unknown". Respond with JSON only.'
-)
-
-
-# ─────────────────────────────── User templates ──────────────────────────────
-
-HAZARD_WARNING_TEMPLATE = """Does this photograph contain a hazardous-warning sign or label?
-yes = at least one hazard/warning/danger sign or safety placard is visible.
-no  = no such signage is visible anywhere in the frame.
-{detection_block}
-{output_contract}"""
-
-GPS_ANTENNA_TEMPLATE = """Is the GPS antenna in this photograph properly mounted with an open view of the sky?
-yes = the antenna is open to the sky; nothing significant obstructs its upward view.
-no  = the antenna's view of the sky is blocked or partially blocked (overhang, canopy,
-      wall, foliage, other equipment, or an indoor/sheltered mounting).
-{detection_block}
-{output_contract}"""
-
-
-@dataclass(frozen=True)
-class Question:
-    id: str
-    label: str                        # shown in the dropdown
-    system_prompt: str                # PER QUESTION - sent as payload["system"]
-    user_template: str                # PER QUESTION - .format(**ctx)
-    answer_semantics: str             # human-readable yes/no meaning, shown in the UI
-    relevant_classes: list[str]       # detector labels to surface / crop to
-    # Class names for THIS question's annotation export, indexed by class_id.
-    #
-    # Each CVAT export is a separate single-class task, so every one of them
-    # numbers its only class 0. "0" therefore means a hazard sign in the HV
-    # export and a GPS antenna in the antenna export - the same id, two
-    # meanings. A single shared classes.txt cannot express that, and guessing
-    # wrong injects a false label into {detection_block}, which the prompt
-    # explicitly tells the model to weigh as evidence.
-    #
-    # A real classes.txt or dataset.yaml in the label folder always wins; this
-    # is the fallback that makes a bare single-class export readable.
-    default_class_names: list[str] = field(default_factory=list)
-    sampling: dict = field(default_factory=dict)   # optional per-question overrides
-
-    def __post_init__(self) -> None:
-        # Trap 9: _build_payload only sets payload["system"] when the string is
-        # non-empty, and both of the server's prompt builders guard on
-        # `if system:`. A blank or mis-keyed system prompt therefore fails
-        # SILENTLY - the model answers with no framing at all, which looks like a
-        # model-quality problem rather than the wiring bug it is. Fail loudly
-        # here instead, at import time.
-        if not (self.system_prompt or "").strip():
-            raise ValueError(f"Question {self.id!r} has an empty system_prompt")
-        if "{output_contract}" not in self.user_template:
-            raise ValueError(f"Question {self.id!r} template is missing {{output_contract}}")
-        if "{detection_block}" not in self.user_template:
-            raise ValueError(f"Question {self.id!r} template is missing {{detection_block}}")
-
-
-QUESTIONS: dict[str, Question] = {
-    "hazard_warning": Question(
-        id="hazard_warning",
-        label="Is a hazardous-warning sign present?",
-        system_prompt=HAZARD_WARNING_SYSTEM,
-        user_template=HAZARD_WARNING_TEMPLATE,
-        answer_semantics=(
-            "YES = a hazard/warning/danger sign or safety placard is visible.  "
-            "NO = no such signage anywhere in the frame."
-        ),
-        # The HV export labels its single class 0; default_class_names below
-        # resolves that to "hazard_sign" without a classes.txt. select_relevant()
-        # still degrades safely if a folder uses different names.
-        relevant_classes=["Warning sign (HV / RF radiation)", "hazard_sign",
-                          "warning_sign", "hazard", "sign", "placard"],
-        default_class_names=["Warning sign (HV / RF radiation)"],
-    ),
-    "gps_antenna": Question(
-        id="gps_antenna",
-        label="Is the GPS antenna open to the sky?",
-        system_prompt=GPS_ANTENNA_SYSTEM,
-        user_template=GPS_ANTENNA_TEMPLATE,
-        answer_semantics=(
-            "YES = the antenna's upward view is clear.  "
-            "NO = its view of the sky is blocked or partially blocked."
-        ),
-        relevant_classes=["GPS Antenna", "gps_antenna", "gps", "antenna"],
-        default_class_names=["GPS Antenna"],
-    ),
-}
-
-# Feeds the Gradio dropdown: [(visible label, value), ...]
+REGISTRY = get_registry()
+QUESTIONS: dict = dict(REGISTRY.questions)
 QUESTION_CHOICES = [(q.label, q.id) for q in QUESTIONS.values()]
+
+
+def refresh() -> None:
+    """Re-read config/ and rebind the module-level snapshots.
+
+    The snapshots are rebound rather than mutated in place so that a caller
+    holding the old dict keeps a consistent view instead of watching questions
+    appear and vanish mid-render.
+    """
+    global REGISTRY, QUESTIONS, QUESTION_CHOICES, SUBJECTS, QUESTION_TEXT
+    REGISTRY = get_registry(reload=True)
+    QUESTIONS = dict(REGISTRY.questions)
+    QUESTION_CHOICES = [(q.label, q.id) for q in QUESTIONS.values()]
+    SUBJECTS = {q.id: q.effective_subject for q in QUESTIONS.values()}
+    QUESTION_TEXT = {q.id: q.effective_question_text for q in QUESTIONS.values()}
 
 
 def get_question(question_id: str) -> Question:
@@ -165,70 +75,6 @@ def get_question(question_id: str) -> Question:
         raise KeyError(
             f"Unknown question id {question_id!r}. Known: {sorted(QUESTIONS)}"
         ) from None
-
-
-def _normalise(label: str) -> str:
-    """Fold a class name to comparable words.
-
-    Real labels are written for humans, not for matching: the trained detector's
-    own classes.json says "GPS Antenna" and "Warning sign (HV / RF radiation)",
-    while annotation folders use "gps_antenna". Exact string equality would miss
-    every one of those, so punctuation, case and separators are flattened.
-    """
-    return re.sub(r"[^a-z0-9]+", " ", (label or "").lower()).strip()
-
-
-def select_relevant(detections: Iterable, question: Question) -> list:
-    """Detections worth surfacing for this question.
-
-    Matches on normalised substrings in either direction, so "GPS Antenna"
-    matches the gps_antenna question and "Warning sign (HV / RF radiation)"
-    matches hazard_warning via "warning sign".
-
-    Still deliberately TOLERANT: if nothing matches, return ALL detections
-    rather than none. A label this function does not recognise silently
-    emptying both the detection block and the crop would look exactly like
-    "the detector found nothing" - the wrong story to tell on stage.
-    """
-    dets = list(detections)
-    if not dets:
-        return []
-    wanted = [_normalise(c) for c in question.relevant_classes if c and c.strip()]
-    wanted = [w for w in wanted if w]
-    matched = []
-    for d in dets:
-        label = _normalise(str(getattr(d, "label", "")))
-        if label and any(w in label or label in w for w in wanted):
-            matched.append(d)
-    return matched or dets
-
-
-def build_detection_block(detections: Iterable) -> str:
-    """The {detection_block} substitution. Empty string when there is nothing to
-    report, so the template collapses cleanly rather than saying "detector found:"
-    followed by nothing."""
-    dets = list(detections)
-    if not dets:
-        return ""
-    parts = []
-    for d in dets:
-        box = [int(round(v)) for v in d.box]
-        parts.append(f"{d.label} (confidence {d.confidence:.2f}) at {box}")
-    return DETECTION_BLOCK_PREFIX + "; ".join(parts) + "."
-
-
-def render_user_prompt(question: Question, detections: Optional[Iterable] = None) -> str:
-    """Format a question's user_template with its detection block and the shared
-    output contract. Collapses the blank line left behind when there are no
-    detections, so the prompt never carries a stray empty line."""
-    block = build_detection_block(detections or [])
-    text = question.user_template.format(
-        detection_block=block,
-        output_contract=OUTPUT_CONTRACT,
-    )
-    while "\n\n\n" in text:
-        text = text.replace("\n\n\n", "\n\n")
-    return text.strip()
 
 
 def sampling_for(question: Question, cfg) -> dict:
@@ -245,11 +91,17 @@ def sampling_for(question: Question, cfg) -> dict:
 
 
 # ─────────────────── Mode 3: three legs, three system prompts ────────────────
-# Mode 3 replaces the classical quality gate and the trained detector with the
-# model. Each of the three judgements is its own call with its own system
-# prompt, so each can be tuned - and blamed - independently. The alternative,
-# one call returning all three, keeps them mutually consistent but makes a
-# wording change to one criterion move the other two answers with it.
+# Mode 3 replaces the classical quality gate, the trained detector AND the OCR
+# stage with the model. Each of the three judgements is its own call with its
+# own system prompt, so each can be tuned - and blamed - independently. The
+# alternative, one call returning all three, keeps them mutually consistent but
+# makes a wording change to one criterion move the other two answers with it.
+#
+# Mode 3 deliberately does NOT get the OCR block. On the four questions that
+# carry an OCR stage, the model reads the text itself, and the gap between what
+# PP-OCRv6 read in modes 1-2 and what the model read here is the thing worth
+# looking at - feeding it the OCR output would erase exactly that comparison.
+# See MODES.md and DECISIONS.md.
 #
 # These are DEFAULTS. pipeline/prompts.py loads any saved overrides from
 # config/prompts.yaml and the UI edits them live.
@@ -266,17 +118,15 @@ LEG_LABELS = {
 }
 
 # What each question is looking for, in words the model can match against the
-# image. Used to build the presence leg's default prompt.
-SUBJECTS = {
-    "hazard_warning": "a hazard, warning or danger sign, label or placard",
-    "gps_antenna": "a GPS antenna",
-}
-
-QUESTION_TEXT = {
-    "hazard_warning": "does this photograph contain a hazardous-warning sign or label?",
-    "gps_antenna": ("is the GPS antenna properly mounted with an open view of the "
-                    "sky?"),
-}
+# image, and the question as mode 3's answer leg asks it.
+#
+# These were hand-maintained dicts keyed by question id, which meant adding a
+# question required remembering to add it to two more places - and forgetting
+# silently downgraded mode 3 to the generic fallback wording, with no error.
+# They are now derived from the questions' own `subject` and `question_text`
+# fields, and kept as dicts only because both names are imported elsewhere.
+SUBJECTS = {q.id: q.effective_subject for q in QUESTIONS.values()}
+QUESTION_TEXT = {q.id: q.effective_question_text for q in QUESTIONS.values()}
 
 QUALITY_SYSTEM_DEFAULT = (
     "You are reviewing photographs taken during telecom site inspections and "
@@ -343,10 +193,9 @@ def render_leg_user(question: Question, leg: str) -> str:
     if leg == LEG_QUALITY:
         return QUALITY_USER_TEMPLATE
     if leg == LEG_PRESENCE:
-        return PRESENCE_USER_TEMPLATE.format(
-            subject=SUBJECTS.get(question.id, "the subject of the inspection"))
+        return PRESENCE_USER_TEMPLATE.format(subject=question.effective_subject)
     if leg == LEG_ANSWER:
         return ANSWER_USER_TEMPLATE.format(
-            question_text=QUESTION_TEXT.get(question.id, question.label),
+            question_text=question.effective_question_text,
             semantics=question.answer_semantics)
     raise KeyError(f"Unknown leg {leg!r}; expected one of {LEGS}")

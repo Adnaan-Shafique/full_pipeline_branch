@@ -1,0 +1,170 @@
+# Detector class registry — the single place an object class is added or removed.
+#
+# Two things read this file:
+#
+#   1. The question registry, to resolve a question's `classes:` list into the
+#      human-readable label strings and aliases that select_relevant() matches
+#      detections against.
+#   2. PipelineConfig.yolox_class_names, which is derived from the entries that
+#      carry `trained: true`, ORDERED BY `yolox_index`.
+#
+# ── Why yolox_index is explicit and not list position ────────────────────────
+# YOLOX stores no class names in a checkpoint, so this file is the only record
+# of them. A wrong ORDER does not error: it puts a confident wrong label on
+# screen AND into the VLM prompt as evidence, which is the failure that already
+# happened once here (the detector was localising hazard signs correctly and
+# calling them GPS antennas). Position in a YAML list is far too easy to change
+# by accident — reordering two entries for readability would silently relabel
+# every detection. The index is therefore written down per class, the loader
+# rejects duplicates and gaps, and re-ordering this file changes nothing.
+#
+# The indices below are verbatim from the training run's own classes.json
+# (models/yolox/runs/<run>/classes.json): {"nc": 2, "names": ["GPS Antenna",
+# "Warning sign (HV / RF radiation)"]}. Do not renumber them without retraining.
+#
+# ── Adding a class ───────────────────────────────────────────────────────────
+# Untrained: add an entry with `trained: false` and no index. It becomes
+# selectable by questions immediately and is matched against annotation
+# sidecars; the detector reports honestly that no trained weights cover it.
+# Trained: set `trained: true` and give it the next `yolox_index` — but only
+# after a retrain that actually produced that index, never in anticipation.
+#
+# `aliases` exist because real labels are written for humans, not for matching:
+# the checkpoint says "GPS Antenna", an annotation folder says "gps_antenna",
+# and a CVAT export may say something else again. Matching is on normalised
+# substrings in either direction, so short aliases are deliberately broad.
+
+classes:
+  # ── Trained (models/best_ckpt.pth, 2 classes) ──────────────────────────────
+  - id: gps_antenna
+    name: GPS Antenna
+    aliases: [gps antenna, gps, antenna]
+    trained: true
+    yolox_index: 0
+
+  - id: hazard_sign
+    name: Warning sign (HV / RF radiation)
+    aliases: [hazard_sign, warning_sign, warning sign, hazard, sign, placard,
+              hv warning, rf radiation]
+    trained: true
+    yolox_index: 1
+
+  # ── Untrained — Infra checklist ────────────────────────────────────────────
+  # Every entry below is an object named in column B of questions_list.xlsx.
+  # None has trained weights; stage 2 falls back to annotation sidecars for
+  # them and labels the result a stub, per the provenance rule in DECISIONS.md.
+  - id: lightning_arrestor
+    name: Lightning Arrestor
+    aliases: [lightning arrestor, lightning arrester, arrestor, arrester]
+    trained: false
+
+  - id: cabinet_outside
+    name: Cabinet - Outside
+    aliases: [cabinet, any other cabinet, outdoor cabinet]
+    trained: false
+
+  - id: ip55_outside
+    name: IP55 - Outside
+    aliases: [ip55, ip 55]
+    trained: false
+
+  - id: ip65_outside
+    name: IP65 - Outside
+    aliases: [ip65, ip 65]
+    trained: false
+
+  - id: cabinet_inside
+    name: Cabinet - Inside
+    aliases: [cabinet interior, cabinet inside]
+    trained: false
+
+  - id: ip55_inside
+    name: IP55 - Inside
+    aliases: [ip55 inside]
+    trained: false
+
+  - id: ip65_inside
+    name: IP65 - Inside
+    aliases: [ip65 inside]
+    trained: false
+
+  - id: shelter_inside
+    name: Shelter - Inside
+    aliases: [shelter, shelter interior]
+    trained: false
+
+  - id: roxtec
+    name: Roxtec / cable entry point
+    aliases: [roxtec, cable entry, cable entry point, cable gland, entry seal]
+    trained: false
+
+  - id: spd_class_b
+    name: Class B SPD
+    aliases: [class b spd, spd class b, spd b, surge protection device class b]
+    trained: false
+
+  - id: spd_class_b_status
+    name: Class B SPD status indicator
+    aliases: [class b spd status, spd b status, spd b indicator, green indicator]
+    trained: false
+
+  - id: spd_class_c
+    name: Class C SPD
+    aliases: [class c spd, spd class c, spd c, surge protection device class c]
+    trained: false
+
+  - id: spd_class_c_status
+    name: Class C SPD status indicator
+    aliases: [class c spd status, spd c status, spd c indicator]
+    trained: false
+
+  - id: eb_meter
+    name: EB meter
+    aliases: [eb meter, energy meter, electricity meter]
+    trained: false
+
+  - id: mccb_box
+    name: MCCB box
+    aliases: [mccb, mccb box, breaker box]
+    trained: false
+
+  - id: smps
+    name: SMPS
+    aliases: [smps, power system, switched mode power supply]
+    trained: false
+
+  - id: rectifier_module
+    name: Rectifier module
+    aliases: [rectifier, rectifier module, rectifier modules]
+    trained: false
+
+  - id: transmission_rack
+    name: Transmission rack
+    aliases: [transmission rack, trasmission rack, tx rack, rack]
+    trained: false
+
+  - id: temp_sensor
+    name: Temperature sensor
+    aliases: [temp sensor, temperature sensor, sensor]
+    trained: false
+
+  - id: earth_pit
+    name: Earth pit
+    aliases: [earth pit, earthing pit, earth chamber]
+    trained: false
+
+  - id: dcdb
+    name: DCDB
+    aliases: [dcdb, dc distribution board]
+    trained: false
+
+  - id: cable_marking
+    name: Cable marking / tag
+    aliases: [cable marking, markings, cable tag, ferrule, label]
+    trained: false
+
+  - id: device_reading
+    name: Device reading
+    aliases: [device reading, display, meter reading, readout, digital display,
+              multimeter, earth tester, thermometer]
+    trained: false

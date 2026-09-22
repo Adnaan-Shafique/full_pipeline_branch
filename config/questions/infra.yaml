@@ -1,0 +1,398 @@
+# Infra — the site-infrastructure checklist from questions_list.xlsx.
+#
+# Sheet mapping: column A "Task" -> label/question_text, column B "Objects" ->
+# classes (ids from config/classes.yaml), column C "Answers" -> yes_means and
+# no_means. Where column A grouped several objects under one task (the cabinet
+# rows), the objects are merged into one question's class list rather than
+# split into near-duplicate questions the operator would have to choose between.
+#
+# ── The minimum a question needs ─────────────────────────────────────────────
+# id, domain, label, subject, question_text, yes_means, no_means, system_prompt.
+# Everything else is derived:
+#   answer_semantics <- "YES = {yes_means}  NO = {no_means}"
+#   user_template    <- built from question_text/yes_means/no_means with the
+#                       {detection_block}, {ocr_block} and {output_contract}
+#                       placeholders in the right places.
+# Write a `user_template:` only when a question needs wording the builder
+# cannot express; the two Site Safety questions do, for provenance reasons.
+#
+# ── The OCR block ────────────────────────────────────────────────────────────
+# `ocr.enabled: true` puts the OCR stage between detection and the model for
+# THIS question in modes 1 and 2. Mode 3 never runs it — the model reads the
+# text itself there, which is the comparison mode 3 exists to expose.
+#   scope: boxes_then_image   OCR the relevant detected boxes; if detection
+#                             found nothing, OCR the whole frame. The default,
+#                             and the only workable one while these classes
+#                             have no trained weights.
+#          boxes              boxes only; report nothing when there are none.
+#          image              always the whole frame, ignore boxes.
+# `numeric` turns a reading into a checked threshold. The rule's verdict is
+# EVIDENCE shown beside the model's answer, never a substitute for it — see
+# DECISIONS.md on why the pipeline does not decide these itself.
+
+questions:
+  # ── Lightning protection ───────────────────────────────────────────────────
+  - id: lightning_arrestor
+    domain: infra
+    label: Is a lightning arrestor present at the site?
+    subject: a lightning arrestor
+    question_text: is a lightning arrestor installed at this site?
+    yes_means: a lightning arrestor is visible at the site.
+    no_means: no lightning arrestor is visible anywhere in the frame.
+    classes: [lightning_arrestor]
+    system_prompt: >-
+      You are a telecom site inspector reviewing photographs of cell-site
+      infrastructure, judging whether a lightning arrestor is installed. A
+      lightning arrestor is a pointed or finial-topped rod, usually mounted at
+      the highest point of the tower, pole or building, with a down-conductor
+      running from it. Judge only from what is visible; do not infer that one
+      exists because a tower of this type would normally carry one. If the top
+      of the structure is outside the frame or too distant to resolve, answer
+      "unknown". Respond with JSON only.
+
+  # ── Enclosure condition ────────────────────────────────────────────────────
+  - id: cabinet_condition_outside
+    domain: infra
+    label: Cabinet / IP55 / IP65 condition — outside
+    subject: an outdoor equipment cabinet or IP55/IP65 enclosure
+    question_text: >-
+      is the outside of this cabinet or IP55/IP65 enclosure in good condition?
+    yes_means: >-
+      the enclosure exterior is sound - no significant corrosion or rust, no
+      gaps, dents or openings, doors and seals intact.
+    no_means: >-
+      the exterior shows corrosion or rust, damaged or missing panels, or
+      openings and bad joins that would let water or vermin in.
+    classes: [cabinet_outside, ip55_outside, ip65_outside]
+    system_prompt: >-
+      You are a telecom site inspector judging the EXTERNAL physical condition of
+      an equipment cabinet or IP55/IP65 enclosure from a photograph. Look for
+      corrosion and rust, flaking or blistered paint, dents and deformation,
+      damaged or missing panels, doors that do not close flush, perished gaskets,
+      and any opening or bad join that would admit water or vermin. Judge
+      condition only - not whether the enclosure is the correct type, not what is
+      inside it, and not its cabling. Ordinary weathering and dirt are not by
+      themselves bad condition; reserve that for damage that affects the
+      enclosure's integrity. If the exterior is too obscured, shadowed or distant
+      to assess, answer "unknown". Respond with JSON only.
+
+  - id: cabinet_condition_inside
+    domain: infra
+    label: Cabinet / IP55 / IP65 / shelter condition — inside
+    subject: the interior of an equipment cabinet, enclosure or shelter
+    question_text: >-
+      is the inside of this cabinet, enclosure or shelter in good condition?
+    yes_means: >-
+      the interior is sound and orderly - no significant corrosion, equipment
+      mounted and cabling routed in an organised way.
+    no_means: >-
+      the interior shows corrosion, or equipment and cabling are tightly packed
+      and unorganised, obstructing access or airflow.
+    classes: [cabinet_inside, ip55_inside, ip65_inside, shelter_inside]
+    system_prompt: >-
+      You are a telecom site inspector judging the INTERNAL condition of an
+      equipment cabinet, enclosure or shelter from a photograph. Two things make
+      an interior bad: physical deterioration - corrosion, rust, water staining,
+      damaged mountings - and disorder, meaning equipment crammed in without
+      proper mounting or cabling bundled and draped so that it obstructs access
+      or airflow. Judge the enclosure's interior condition only, not whether the
+      equipment inside it is the right equipment or correctly configured. A dense
+      but neatly routed and properly mounted installation is good condition, not
+      bad. If the interior is too dark, reflective or cropped to assess, answer
+      "unknown". Respond with JSON only.
+
+  - id: roxtec_closed
+    domain: infra
+    label: Is the Roxtec / cable entry sealed against rodent entry?
+    subject: a Roxtec seal or cable entry point in a shelter or cabinet
+    question_text: >-
+      is the Roxtec or cable entry point closed, with no other visible holes or
+      openings for rodent entry?
+    yes_means: >-
+      the Roxtec or cable entry is fully closed and sealed, and no other
+      openings are visible.
+    no_means: >-
+      the Roxtec or cable entry is open or only partly sealed, or another hole
+      or opening is visible that a rodent could pass through.
+    classes: [roxtec]
+    system_prompt: >-
+      You are a telecom site inspector checking whether cable entry points into a
+      shelter or cabinet are sealed against vermin. A Roxtec or equivalent seal
+      is closed when its frame is fully packed around every cable with no visible
+      gap, void or missing block, and its compression wedge is fitted. Also look
+      for any OTHER unsealed opening in the same panel - spare gland holes,
+      knockouts, gaps around conduit. Any visible gap large enough for a rodent
+      means not closed, even if the Roxtec frame itself looks fitted. If the
+      entry point is not clearly visible or is shot from too oblique an angle to
+      see gaps, answer "unknown". Respond with JSON only.
+
+  # ── Surge protection ───────────────────────────────────────────────────────
+  # The two "installed" questions carry OCR: an SPD is identified largely by the
+  # printed class marking on its body ("Class B", "T1", "Imax", a voltage), and
+  # reading that marking is what separates a Class B module from a Class C one
+  # sitting in the same enclosure. The "active condition" questions do NOT carry
+  # OCR - those turn on the colour of a mechanical indicator window, which is a
+  # colour judgement, not text, and OCR on it returns noise at best.
+  - id: spd_class_b_installed
+    domain: infra
+    label: Is a Class B SPD installed?
+    subject: a Class B surge protection device beside the EB meter or MCCB box
+    question_text: >-
+      is a Class B surge protection device (SPD) installed beside the EB meter
+      or MCCB box?
+    yes_means: a Class B SPD is visible and installed in the panel.
+    no_means: no Class B SPD is visible in the panel.
+    classes: [spd_class_b, eb_meter, mccb_box]
+    ocr:
+      enabled: true
+      scope: boxes_then_image
+    system_prompt: >-
+      You are a telecom site inspector checking a mains distribution panel for a
+      Class B surge protection device. A Class B (Type 1) SPD is a DIN-rail
+      module, normally installed close to the incoming supply beside the EB meter
+      or MCCB box, and is identified by the class marking printed on its body -
+      "Class B", "Type 1", "T1", or an Iimp rating in kA. Text read from the
+      image by an OCR engine may be supplied to you as advisory evidence; weigh
+      it against what you can see, and prefer the image when the two disagree.
+      Distinguish a Class B module from a Class C/Type 2 one, which is a
+      different answer to this question. If no module marking is legible and the
+      module type cannot be established from the image, answer "unknown".
+      Respond with JSON only.
+
+  - id: spd_class_b_active
+    domain: infra
+    label: Is the Class B SPD in active condition?
+    subject: the status indicator window of a Class B SPD
+    question_text: is the Class B SPD showing an active (green) status?
+    yes_means: >-
+      the SPD's status indicator shows green - the module is active and has not
+      tripped.
+    no_means: >-
+      the status indicator shows red, or a blank/discoloured window - the module
+      has tripped or failed.
+    classes: [spd_class_b_status, spd_class_b]
+    system_prompt: >-
+      You are a telecom site inspector reading the status indicator of a Class B
+      surge protection device. These modules carry a small window that shows
+      GREEN while the module is healthy and switches to RED, or to a blank or
+      discoloured field, once the internal disconnector has operated. Judge the
+      indicator colour only; a module can be dirty, old or oddly mounted and
+      still be active. Where several modules are visible, judge the Class B one.
+      If the indicator window is not visible, is washed out by glare, or the
+      colour cannot be told apart from reflection, answer "unknown". Respond with
+      JSON only.
+
+  - id: spd_class_c_installed
+    domain: infra
+    label: Is a Class C SPD installed?
+    subject: a Class C surge protection device integrated with the SMPS
+    question_text: >-
+      is a Class C surge protection device (SPD) installed, integrated with the
+      SMPS?
+    yes_means: a Class C SPD is visible, integrated with or mounted at the SMPS.
+    no_means: no Class C SPD is visible at the SMPS.
+    classes: [spd_class_c, smps]
+    ocr:
+      enabled: true
+      scope: boxes_then_image
+    system_prompt: >-
+      You are a telecom site inspector checking an SMPS / power system for a
+      Class C surge protection device. A Class C (Type 2) SPD is a module fitted
+      within or immediately at the SMPS, identified by the class marking printed
+      on its body - "Class C", "Type 2", "T2", or an In/Imax rating in kA. Text
+      read from the image by an OCR engine may be supplied to you as advisory
+      evidence; weigh it against what you can see, and prefer the image when the
+      two disagree. Distinguish a Class C module from a Class B/Type 1 one, which
+      is a different answer to this question. If no module marking is legible and
+      the module type cannot be established from the image, answer "unknown".
+      Respond with JSON only.
+
+  - id: spd_class_c_active
+    domain: infra
+    label: Is the Class C SPD in active condition?
+    subject: the status indicator window of a Class C SPD
+    question_text: is the Class C SPD showing an active (green) status?
+    yes_means: >-
+      the SPD's status indicator shows green - the module is active and has not
+      tripped.
+    no_means: >-
+      the status indicator shows red, or a blank/discoloured window - the module
+      has tripped or failed.
+    classes: [spd_class_c_status, spd_class_c]
+    system_prompt: >-
+      You are a telecom site inspector reading the status indicator of a Class C
+      surge protection device. These modules carry a small window that shows
+      GREEN while the module is healthy and switches to RED, or to a blank or
+      discoloured field, once the internal disconnector has operated. Judge the
+      indicator colour only; a module can be dirty, old or oddly mounted and
+      still be active. Where several modules are visible, judge the Class C one.
+      If the indicator window is not visible, is washed out by glare, or the
+      colour cannot be told apart from reflection, answer "unknown". Respond with
+      JSON only.
+
+  # ── Power ──────────────────────────────────────────────────────────────────
+  - id: rectifier_modules_present
+    domain: infra
+    label: Are rectifier modules present in the SMPS?
+    subject: rectifier modules in an SMPS / power system
+    question_text: are rectifier modules present in this power system?
+    yes_means: one or more rectifier modules are visible, fitted in the SMPS.
+    no_means: no rectifier modules are visible, or every slot is empty or blanked.
+    classes: [rectifier_module, smps]
+    system_prompt: >-
+      You are a telecom site inspector reviewing a photograph of an SMPS / DC
+      power system and reporting whether rectifier modules are fitted. Rectifier
+      modules are the slot-in units across the power shelf, usually with a fan
+      grille and one or more status LEDs on the front; makes differ in
+      appearance, so judge by the slot-in form factor rather than by brand. A
+      blanking plate is not a rectifier module. Report only what is visible in
+      this photograph: the full question this feeds - whether the modules are in
+      an N+1 configuration for the site's DC load - cannot be settled from a
+      photograph, because it needs the load figure, and you are not being asked
+      to estimate it. If the power shelf is not visible or too distant to tell
+      modules from blanks, answer "unknown". Respond with JSON only.
+
+  # ── Temperature ────────────────────────────────────────────────────────────
+  - id: temp_sensor_placement
+    domain: infra
+    label: Is the temperature sensor on top of the transmission rack?
+    subject: a temperature sensor and a transmission rack
+    question_text: >-
+      is the temperature sensor placed on the top of the transmission rack?
+    yes_means: the temperature sensor is mounted on top of the transmission rack.
+    no_means: >-
+      the sensor is placed somewhere else - on a wall, inside the rack, on
+      another rack, or lying loose.
+    classes: [temp_sensor, transmission_rack]
+    system_prompt: >-
+      You are a telecom site inspector checking where a temperature sensor is
+      mounted, for indoor sites. The sensor should sit ON TOP of the transmission
+      rack, where it reads the air the equipment actually draws. Identify the
+      transmission rack and the sensor, then judge their spatial relationship:
+      on top of that rack is yes; mounted on a wall, fixed inside the rack,
+      sitting on a different rack, or hanging loose is no. Judge placement only,
+      not the sensor's make, wiring or reading. If either the sensor or the top
+      of the rack is outside the frame, or the sensor cannot be told apart from
+      other small devices, answer "unknown". Respond with JSON only.
+
+  - id: temp_within_limit
+    domain: infra
+    label: Is the temperature within 35 °C at indoor AC sites?
+    subject: a temperature display or device reading
+    question_text: >-
+      does the temperature reading shown on this device indicate 35 degrees
+      Celsius or less?
+    yes_means: the reading on the device is 35 °C or below.
+    no_means: the reading on the device is above 35 °C.
+    classes: [device_reading, temp_sensor]
+    ocr:
+      enabled: true
+      scope: boxes_then_image
+      numeric:
+        label: Temperature
+        unit: "°C"
+        comparator: "<="
+        limit: 35.0
+        # Matches "34", "34.5", "34.5 C", "34.5°C", "34,5 oC". The unit is
+        # optional because seven-segment displays frequently show the number
+        # alone, with the unit silk-screened on the bezel where OCR never sees
+        # it. Anchored to a word boundary so the "55" of "IP55" cannot be read
+        # as a temperature.
+        pattern: '(?<![\w.])(-?\d{1,3}(?:[.,]\d{1,2})?)\s*(?:°|º|o|°)?\s*[Cc]?(?![\w])'
+    system_prompt: >-
+      You are a telecom site inspector reading a temperature measurement from a
+      photograph of a display at an indoor air-conditioned site. The question is
+      whether the temperature is being maintained at or below 35 degrees Celsius.
+      Read the number shown on the device. Text read from the image by an OCR
+      engine may be supplied to you as advisory evidence, along with a threshold
+      check computed from it; weigh both against what you can actually see in the
+      image, and prefer the image when they disagree - an OCR engine will
+      misread a seven-segment display more readily than you will. Watch for a
+      reading in Fahrenheit, a set-point rather than a measured value, and a
+      decimal point lost to glare. If no reading is legible, answer "unknown"
+      rather than estimating the temperature from the scene. Respond with JSON
+      only.
+
+  # ── Earthing ───────────────────────────────────────────────────────────────
+  - id: earth_pit_condition
+    domain: infra
+    label: Is the earth pit in good physical condition?
+    subject: an earth pit
+    question_text: is the earth pit in good physical condition?
+    yes_means: >-
+      the pit is sound - cover present and intact, chamber undamaged, strip and
+      bolted connection clean and secure, no standing water or debris.
+    no_means: >-
+      the pit is damaged, its cover is missing or broken, or the chamber is
+      cracked, flooded, filled with debris, or the connection is corroded.
+    classes: [earth_pit]
+    system_prompt: >-
+      You are a telecom site inspector judging the physical condition of an earth
+      pit from a photograph. Look at the cover - present, intact, seated - and
+      the chamber below it: cracking or collapse of the walls, standing water,
+      soil or debris filling it, and the state of the earth strip and its bolted
+      connection, which should be clean and tight rather than corroded or loose.
+      Judge physical condition only; the measured earth resistance is a separate
+      question and cannot be read from this photograph. If the pit is closed and
+      its interior is not visible, judge the cover and surround alone and say so
+      in the reasoning. If neither is assessable, answer "unknown". Respond with
+      JSON only.
+
+  - id: earthing_value_egb
+    domain: infra
+    label: Is the earthing value at the EGB below 2 Ω?
+    subject: an earth-resistance meter display or device reading
+    question_text: >-
+      does the earth resistance reading shown on this device indicate less than
+      2 ohms?
+    yes_means: the reading on the device is below 2 ohms.
+    no_means: the reading on the device is 2 ohms or more.
+    classes: [device_reading]
+    ocr:
+      enabled: true
+      scope: boxes_then_image
+      numeric:
+        label: Earth resistance
+        unit: "Ω"
+        comparator: "<"
+        limit: 2.0
+        # Matches "1.85", "1.85 ohm", "0.92Ω". Unlike the temperature pattern
+        # this one keeps the unit optional too, because earth testers often show
+        # the range on a rotary switch rather than beside the digits.
+        pattern: '(?<![\w.])(\d{1,4}(?:[.,]\d{1,3})?)\s*(?:Ω|ohms?|OHM|Ω)?(?![\w])'
+    system_prompt: >-
+      You are a telecom site inspector reading an earth-resistance measurement
+      from a photograph of a test instrument at the earth bus bar (EGB). The
+      question is whether the measured earthing value is below 2 ohms. Read the
+      number shown on the instrument. Text read from the image by an OCR engine
+      may be supplied to you as advisory evidence, along with a threshold check
+      computed from it; weigh both against what you can actually see, and prefer
+      the image when they disagree. Watch for the RANGE MULTIPLIER - a reading of
+      "1.85" on a 20Ω range is 1.85 ohms, but the same digits with a kΩ or mΩ
+      indicator are not - and for a decimal point lost to glare, which turns 1.85
+      into 185. If no reading is legible, or the units cannot be established,
+      answer "unknown" rather than assuming ohms. Respond with JSON only.
+
+  # ── Distribution ───────────────────────────────────────────────────────────
+  - id: dcdb_cables_tagged
+    domain: infra
+    label: Are the incoming SMPS-to-DCDB supply cables tagged?
+    subject: a DCDB with incoming supply cables and their markings
+    question_text: >-
+      are the incoming supply cables from the SMPS to the DCDB tagged with
+      markings?
+    yes_means: >-
+      the incoming cables carry identification tags, ferrules or written
+      markings.
+    no_means: the incoming cables carry no tags, ferrules or markings.
+    classes: [dcdb, cable_marking, smps]
+    system_prompt: >-
+      You are a telecom site inspector checking whether the incoming DC supply
+      cables at a DCDB are identified. Look at the cables entering the DCDB and
+      whether each carries an identification marker - a wrap-around label, a
+      printed ferrule, a heat-shrink sleeve with text, or a hand-written tag.
+      The question is whether the cables are tagged, not whether what the tags
+      say is correct, and not whether the cable routing is tidy. Coloured
+      insulation or coloured sleeving alone is not a tag. If the cable entry is
+      obscured by other cabling or is outside the frame, answer "unknown".
+      Respond with JSON only.

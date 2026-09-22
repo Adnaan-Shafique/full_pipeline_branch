@@ -116,10 +116,18 @@ class PipelineConfig:
     # classes.json (models/yolox/runs/<run>/classes.json, written by
     # 02_train.ipynb from configs/dataset.yaml):
     #     {"nc": 2, "names": ["GPS Antenna", "Warning sign (HV / RF radiation)"]}
-    # YOLOX stores no names in a checkpoint, so this is the only record of them.
-    # The order is the REVERSE of what was assumed before the smoke test: the
-    # detector was localising hazard signs correctly and calling them
+    # YOLOX stores no names in a checkpoint, so this list is the only record of
+    # them. The order is the REVERSE of what was assumed before the smoke test:
+    # the detector was localising hazard signs correctly and calling them
     # gps_antenna. Read from the data, never inferred from output.
+    #
+    # THE SOURCE OF TRUTH IS config/classes.yaml, whose `trained: true` entries
+    # carry an explicit yolox_index. default_config() reads it and overwrites
+    # this field, so adding a trained class is a YAML edit and never a code
+    # edit. The literal below is the FALLBACK used when pyyaml is missing or
+    # config/ has been deleted, and tests/test_yolox.py asserts it still equals
+    # what the YAML resolves to - if they ever disagree, that suite fails rather
+    # than one of them silently winning.
     yolox_class_names: tuple[str, ...] = (
         "GPS Antenna", "Warning sign (HV / RF radiation)")
 
@@ -346,8 +354,33 @@ def env_overrides() -> dict:
     return found
 
 
+def registry_class_names() -> tuple:
+    """Trained class names in checkpoint order, from config/classes.yaml.
+
+    Returns () when the registry cannot be read at all, which is the signal to
+    keep PipelineConfig's pinned fallback. The registry itself never returns a
+    partial or mis-ordered list: a class missing its yolox_index, carrying a
+    duplicate one, or sitting after a gap is demoted to untrained with a
+    warning, precisely so that this function cannot hand back a list whose
+    positions do not match the checkpoint head's outputs.
+    """
+    try:
+        from .registry import get_registry
+        return tuple(get_registry().yolox_class_names())
+    except Exception:
+        # Never let a config-file problem stop a PipelineConfig being built.
+        # The pinned fallback is correct for the committed checkpoint.
+        return ()
+
+
 def default_config(**overrides) -> PipelineConfig:
     cfg = PipelineConfig()
+    # The YAML is authoritative, but an explicit keyword still beats it - the
+    # UI's class-name box and the smoke tools both pass one.
+    if "yolox_class_names" not in overrides:
+        names = registry_class_names()
+        if names:
+            cfg.yolox_class_names = names
     for key, value in {**env_overrides(), **overrides}.items():
         # The three path fields are properties backed by private attrs; setattr
         # routes through their setters, so this works for them too.

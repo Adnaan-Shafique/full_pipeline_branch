@@ -1,0 +1,26 @@
+# Inspection domains — the first dropdown in app/demo_dash_pipeline.py.
+#
+# A domain is a grouping of questions, nothing more: it carries no prompt, no
+# threshold and no model. Adding one means adding an entry here and a matching
+# `domain:` on at least one question in config/questions/. A domain with no
+# questions is dropped from the dropdown rather than shown empty — an empty
+# domain on screen reads as "the questions failed to load".
+#
+# `order` drives the dropdown order. Equal or missing values fall back to the
+# order of this file, so appending an entry without an order still works.
+domains:
+  - id: site_safety
+    label: Site Safety
+    order: 1
+    blurb: >-
+      Signage and antenna-siting questions answerable from a single photograph.
+      These are the two questions the pipeline was originally built around, and
+      the only two with a trained YOLOX class behind them.
+
+  - id: infra
+    label: Infra
+    order: 2
+    blurb: >-
+      Power, earthing, enclosure and rack questions from the site-infrastructure
+      checklist. No trained detector classes exist for these yet, so stage 2
+      runs on annotation sidecars and says so; four of them carry an OCR stage.

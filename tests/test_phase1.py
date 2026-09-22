@@ -78,13 +78,34 @@ check("top() returns the highest-confidence detection", real.top().label == "gps
 check("top() on empty returns None", stub.top() is None)
 
 print("\nquestions - every question carries a non-empty system prompt (trap 9)")
-check("two questions registered", set(pq.QUESTIONS) == {"hazard_warning", "gps_antenna"},
+# The registry is loaded from config/questions/*.yaml and grows as questions are
+# added, so this no longer pins a count. What it pins is that the two originals
+# are still there - several suites below ask for them by id - and that EVERY
+# registered question, however many there are, satisfies trap 9.
+check("the two original questions are still registered",
+      {"hazard_warning", "gps_antenna"} <= set(pq.QUESTIONS),
       f"got {sorted(pq.QUESTIONS)}")
+check("at least one question is registered", len(pq.QUESTIONS) >= 2,
+      f"got {len(pq.QUESTIONS)}")
 for qid, q in pq.QUESTIONS.items():
     check(f"{qid}: system_prompt non-empty", bool(q.system_prompt.strip()))
     check(f"{qid}: system_prompt is question-specific", q.system_prompt != pq.OUTPUT_CONTRACT)
 check("the two system prompts differ from each other",
       pq.QUESTIONS["hazard_warning"].system_prompt != pq.QUESTIONS["gps_antenna"].system_prompt)
+# One generic persona doing every job is the thing questions.py exists to avoid,
+# so no two questions may share a system prompt.
+_seen = {}
+_shared = []
+for qid, q in pq.QUESTIONS.items():
+    _shared.append(f"{_seen[q.system_prompt]}/{qid}") if q.system_prompt in _seen else None
+    _seen.setdefault(q.system_prompt, qid)
+check("no two questions share a system prompt", not _shared, "; ".join(_shared))
+# Every question must belong to a domain the registry actually knows, or it
+# would be unreachable from the domain dropdown in demo_dash_pipeline.py.
+_orphans = [qid for qid, q in pq.QUESTIONS.items() if q.domain not in pq.REGISTRY.domains]
+check("every question's domain exists", not _orphans, str(_orphans))
+check("the config tree loaded without warnings", not pq.REGISTRY.warnings,
+      "; ".join(pq.REGISTRY.warnings))
 check("dropdown choices are (label, id) pairs",
       pq.QUESTION_CHOICES == [(q.label, q.id) for q in pq.QUESTIONS.values()])
 

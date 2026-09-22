@@ -196,17 +196,63 @@ smoke = (ROOT / "tools" / "smoke_yolox.py").read_text()
 check("smoke_yolox falls back to cfg.yolox_class_names",
       "default_config().yolox_class_names" in smoke)
 
-# The class names live in exactly one place. Anything else defining that tuple
-# is a second source of truth waiting to drift.
+# The class names now live in config/classes.yaml, whose trained entries carry
+# an explicit yolox_index. Two copies of them remain ON PURPOSE - config.py's
+# pinned default and registry.py's BUILTIN_CLASSES - because both are the
+# fallback for a host with no pyyaml, where the YAML cannot be read at all.
+# A fallback that has drifted from the real thing is worse than no fallback:
+# it relabels every detection and nothing errors. So rather than banning the
+# second copy, pin the three against each other here.
 cfg_src = (ROOT / "app" / "pipeline" / "config.py").read_text()
-check("config.py is where the names are defined",
+check("config.py still carries the pinned fallback names",
       "GPS Antenna" in cfg_src and "Warning sign" in cfg_src)
+check("config.py points at the YAML as the source of truth",
+      "config/classes.yaml" in cfg_src)
+
+from pipeline.config import PipelineConfig, registry_class_names  # noqa: E402
+from pipeline.registry import BUILTIN_CLASSES, load_registry      # noqa: E402
+
+yaml_names = registry_class_names()
+check("config/classes.yaml resolves to a non-empty trained class list",
+      bool(yaml_names), f"got {yaml_names}")
+check("the YAML and config.py's fallback agree, in order",
+      yaml_names == PipelineConfig().yolox_class_names,
+      f"yaml={yaml_names} fallback={PipelineConfig().yolox_class_names}")
+builtin_names = tuple(
+    c.name for c in sorted((c for c in BUILTIN_CLASSES.values() if c.trained),
+                           key=lambda c: c.yolox_index))
+check("registry.py's no-pyyaml fallback agrees too, in order",
+      builtin_names == yaml_names, f"builtin={builtin_names} yaml={yaml_names}")
+
+# Everything else must still not name them. question_types.py in particular
+# describes the matching rules without repeating a single class name.
+EXEMPT = {"config.py", "questions.py", "registry.py"}
 for path in sorted((ROOT / "app" / "pipeline").glob("*.py")):
-    if path.name in ("config.py", "questions.py"):
-        continue   # questions.py legitimately names them for relevance matching
+    if path.name in EXEMPT:
+        continue
     body = path.read_text()
     check(f"{path.name} does not redefine the class names",
           "GPS Antenna" not in body, path.name)
+
+# A gap or a duplicate in yolox_index must demote the class and warn, never
+# silently produce a list whose positions no longer match the head's outputs.
+import tempfile, textwrap  # noqa: E402
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    (root / "questions").mkdir()
+    (root / "classes.yaml").write_text(textwrap.dedent("""
+        classes:
+          - {id: a, name: A, trained: true, yolox_index: 0}
+          - {id: b, name: B, trained: true, yolox_index: 0}
+          - {id: c, name: C, trained: true}
+    """))
+    reg = load_registry(root)
+    check("a duplicate yolox_index demotes the later class",
+          reg.yolox_class_names() == ("A",), f"got {reg.yolox_class_names()}")
+    check("the duplicate is reported, not swallowed",
+          any("claimed by both" in w for w in reg.warnings), str(reg.warnings))
+    check("trained: true with no yolox_index is reported",
+          any("no yolox_index" in w for w in reg.warnings), str(reg.warnings))
 
 print("\nboth backends produce the same downstream shape")
 from pipeline.schemas import Detection, DetectionStageResult, SOURCE_MODEL  # noqa: E402

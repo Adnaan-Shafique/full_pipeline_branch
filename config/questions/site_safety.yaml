@@ -1,0 +1,65 @@
+# Site Safety — the two questions the pipeline was originally built around.
+#
+# These are migrated VERBATIM from the string constants that used to live in
+# app/pipeline/questions.py. The wording is unchanged on purpose: every timing,
+# answer and screenshot recorded for this demo was produced with this exact
+# text, and a "tidy-up" here would silently invalidate all of it.
+#
+# `user_template` is given explicitly for both, rather than letting the registry
+# build one, for the same reason. New questions generally omit it — see
+# config/questions/infra.yaml.
+
+questions:
+  - id: hazard_warning
+    domain: site_safety
+    label: Is a hazardous-warning sign present?
+    # Mode 3's presence leg asks "is {subject} visible in this photograph?"
+    subject: a hazard, warning or danger sign, label or placard
+    # Mode 3's answer leg opens with this, lower-cased and question-shaped.
+    question_text: does this photograph contain a hazardous-warning sign or label?
+    answer_semantics: >-
+      YES = a hazard/warning/danger sign or safety placard is visible.  NO = no
+      such signage anywhere in the frame.
+    classes: [hazard_sign]
+    system_prompt: >-
+      You are a site-safety inspector reviewing photographs of telecom equipment
+      installations. Your task is to determine whether a hazardous-warning sign,
+      label, or placard is visible in the photograph - for example high-voltage
+      warnings, electrical-hazard symbols, RF-radiation warnings, danger/caution
+      placards, or equivalent safety signage. Judge only from what is actually
+      visible; do not infer that signage exists because the equipment type would
+      normally require it. If the image is too unclear, cropped, or distant to
+      tell, answer "unknown". Respond with JSON only.
+    user_template: |-
+      Does this photograph contain a hazardous-warning sign or label?
+      yes = at least one hazard/warning/danger sign or safety placard is visible.
+      no  = no such signage is visible anywhere in the frame.
+      {detection_block}
+      {output_contract}
+
+  - id: gps_antenna
+    domain: site_safety
+    label: Is the GPS antenna open to the sky?
+    subject: a GPS antenna
+    question_text: is the GPS antenna properly mounted with an open view of the sky?
+    answer_semantics: >-
+      YES = the antenna's upward view is clear.  NO = its view of the sky is
+      blocked or partially blocked.
+    classes: [gps_antenna]
+    system_prompt: >-
+      You are a telecom installation inspector reviewing photographs of GPS
+      antennas mounted at cell sites. A GPS antenna functions correctly only when
+      it has a clear, unobstructed view of the open sky above it. Your task is to
+      judge, from the photograph, whether the antenna's upward view is clear. Pay
+      attention to what sits directly above and around the antenna: roof
+      overhangs, canopies, walls, tree canopy, cable trays, other antennas or
+      equipment, or an indoor/sheltered location. Do not judge the antenna's
+      cabling, cosmetic condition, or brand. If the region above the antenna is
+      not visible in the frame, answer "unknown". Respond with JSON only.
+    user_template: |-
+      Is the GPS antenna in this photograph properly mounted with an open view of the sky?
+      yes = the antenna is open to the sky; nothing significant obstructs its upward view.
+      no  = the antenna's view of the sky is blocked or partially blocked (overhang, canopy,
+            wall, foliage, other equipment, or an indoor/sheltered mounting).
+      {detection_block}
+      {output_contract}
