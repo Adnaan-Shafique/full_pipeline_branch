@@ -172,17 +172,24 @@ Respond with JSON only, no markdown fence:
 def default_leg_system(question: Question, leg: str) -> str:
     """The built-in system prompt for one leg of mode 3.
 
-    The answer leg reuses the question's OWN system prompt verbatim, so there is
-    still exactly one place where each question's framing is authored - editing
-    it in the UI overrides that copy for mode 3 only, leaving modes 1 and 2 on
-    the original.
+    The answer leg reuses the question's OWN system prompt, so there is still
+    exactly one place where each question's framing is authored - editing it in
+    the UI overrides that copy for mode 3 only, leaving modes 1 and 2 on the
+    original.
+
+    The exception is a question with an OCR stage. Its system prompt tells the
+    model that OCR text "may be supplied to you as advisory evidence", and in
+    mode 3 it never is - so those four questions carry a `system_prompt_no_ocr`
+    in their YAML that says the opposite, and `answer_leg_system` picks it. A
+    prompt promising evidence that does not arrive is the worst framing
+    available for the one mode meant to show what the model reads unaided.
     """
     if leg == LEG_QUALITY:
         return QUALITY_SYSTEM_DEFAULT
     if leg == LEG_PRESENCE:
         return PRESENCE_SYSTEM_DEFAULT
     if leg == LEG_ANSWER:
-        return question.system_prompt
+        return question.answer_leg_system
     raise KeyError(f"Unknown leg {leg!r}; expected one of {LEGS}")
 
 

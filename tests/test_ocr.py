@@ -276,6 +276,43 @@ for qid in ("temp_within_limit", "spd_class_b_installed"):
 check("the mode-3 legs take no ocr argument at all",
       "ocr" not in pq.render_leg_user.__code__.co_varnames)
 
+# A question whose system prompt promises OCR evidence must not send that same
+# prompt in the one mode where the evidence never arrives. This was a real bug:
+# all four OCR questions told mode 3 that "text read from the image by an OCR
+# engine may be supplied to you", and nothing ever supplied it.
+for qid in ("temp_within_limit", "earthing_value_egb",
+            "spd_class_b_installed", "spd_class_c_installed"):
+    q = pq.get_question(qid)
+    m3 = pq.default_leg_system(q, "answer")
+    check(f"{qid}: modes 1-2 and mode 3 get DIFFERENT system prompts",
+          q.system_prompt != m3)
+    check(f"{qid}: modes 1-2 are told OCR text may be supplied",
+          "may be supplied" in q.system_prompt)
+    check(f"{qid}: mode 3 is NOT promised evidence it never gets",
+          "may be supplied" not in m3, m3[:120])
+    check(f"{qid}: mode 3 is told to read the text itself",
+          "No OCR output" in m3, m3[:120])
+    check(f"{qid}: mode 3's prompt is not blank", bool(m3.strip()))
+for qid in ("gps_antenna", "hazard_warning", "earth_pit_condition"):
+    q = pq.get_question(qid)
+    check(f"{qid}: no OCR stage, so one prompt still serves both modes",
+          q.system_prompt == pq.default_leg_system(q, "answer"))
+check("every question that carries OCR also carries the mode-3 variant",
+      all(q.system_prompt_no_ocr.strip()
+          for q in pq.QUESTIONS.values() if q.ocr.enabled),
+      str([q.id for q in pq.QUESTIONS.values()
+           if q.ocr.enabled and not q.system_prompt_no_ocr.strip()]))
+# Blank-but-present is trap 9 again: the server skips a falsy system turn.
+from pipeline.question_types import Question as _Q  # noqa: E402
+try:
+    _Q(id="t", label="t", system_prompt="S",
+       user_template="{detection_block}{output_contract}",
+       answer_semantics="", relevant_classes=[], system_prompt_no_ocr="   ")
+    raised = False
+except ValueError:
+    raised = True
+check("a whitespace-only mode-3 prompt is rejected at construction", raised)
+
 print("\nthe engine module reports what is actually on disk")
 present = ocr_engine.available_variants()
 check("the committed tiny variant is found", "tiny" in present, str(present))

@@ -467,7 +467,8 @@ def _question_from(entry: dict, classes: dict, domains: dict, warnings: list):
             domain=domain,
             subject=str(entry.get("subject") or "").strip(),
             question_text=str(entry.get("question_text") or "").strip(),
-            ocr=ocr, class_ids=class_ids)
+            ocr=ocr, class_ids=class_ids,
+            system_prompt_no_ocr=str(entry.get("system_prompt_no_ocr") or "").strip())
     except ValueError as exc:
         # Question.__post_init__ rejected it — a blank system prompt or a
         # template missing a placeholder. Both are silent failures at runtime,

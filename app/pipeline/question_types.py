@@ -181,6 +181,15 @@ class Question:
     subject: str = ""
     question_text: str = ""
     ocr: OCRSpec = field(default_factory=OCRSpec)
+    # Mode 3's answer leg reuses `system_prompt` verbatim, so that each
+    # question's framing is authored in exactly one place. That breaks down for
+    # a question with an OCR stage: its prompt tells the model that OCR text
+    # "may be supplied to you as advisory evidence", and in mode 3 it never is.
+    # Promising evidence that does not arrive is the worst possible framing for
+    # the one mode whose whole job is to show what the model can read unaided.
+    # When set, mode 3's answer leg uses this instead. Empty means the question
+    # never mentions OCR and one prompt serves both.
+    system_prompt_no_ocr: str = ""
     # Class ids from config/classes.yaml, kept for the UI's "what does this
     # question look for" panel. relevant_classes above is the resolved,
     # match-ready list of names and aliases.
@@ -202,11 +211,23 @@ class Question:
         # The same failure one stage later: OCR would run, cost its seconds, and
         # its text would never reach the model, which reads as "the OCR stage
         # found nothing" rather than "the template forgot to include it".
+        if self.system_prompt_no_ocr is not None and self.system_prompt_no_ocr != "":
+            if not self.system_prompt_no_ocr.strip():
+                raise ValueError(
+                    f"Question {self.id!r} has a whitespace-only "
+                    f"system_prompt_no_ocr - mode 3 would send an empty system "
+                    f"turn, which the server skips silently (trap 9). Leave it "
+                    f"absent to reuse system_prompt")
         if self.ocr.enabled and "{ocr_block}" not in self.user_template:
             raise ValueError(
                 f"Question {self.id!r} has ocr.enabled but its template is "
                 f"missing {{ocr_block}} - the OCR text would be read and then "
                 f"silently discarded")
+
+    @property
+    def answer_leg_system(self) -> str:
+        """The system prompt mode 3's answer leg actually sends."""
+        return self.system_prompt_no_ocr.strip() or self.system_prompt
 
     @property
     def effective_subject(self) -> str:
