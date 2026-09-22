@@ -325,6 +325,12 @@ Two companion logs are kept up to date by hand: `DECISIONS.md` (why things are
 the way they are) and `CHANGELOG.md` (what changed, when). Add to them when a
 change is worth explaining later.
 
+`WALKTHROUGH.md` is the reading order for someone arriving at the *code* cold —
+six files, in the order that makes them make sense, then one photograph
+followed all the way through. Keep its line counts and symbol references
+accurate; they are checked by hand and a stale one sends a reader to the wrong
+place.
+
 `README.md` is the front door for a human arriving cold — what the pipeline
 does, the four UIs and ports, a quick start, and a map of the other documents.
 This file is the one for a Claude session; keep the split, and do not duplicate

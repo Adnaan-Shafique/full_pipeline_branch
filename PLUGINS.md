@@ -1,5 +1,8 @@
 # Adding and removing questions, domains and object classes
 
+*Changing the code rather than the questions? `WALKTHROUGH.md` is the reading
+order for that.*
+
 Everything the pipeline asks about lives in three YAML files. Editing them is
 the whole procedure — no Python changes, no restart if you press **Reload
 config/** in the UI on 7873.

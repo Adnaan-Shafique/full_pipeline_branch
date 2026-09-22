@@ -165,6 +165,7 @@ looked is the one thing this demo will not do.
 
 | File | For |
 |---|---|
+| `WALKTHROUGH.md` | **how to read this repository** — start here if the code is new to you |
 | `SETUP.md` | installing on a fresh host |
 | `YOLOX_SETUP.md`, `COPY_FROM_AISERVER.md` | the detector, and the two files git does not carry |
 | `PROXY.md` | reaching the model through the proxy |
