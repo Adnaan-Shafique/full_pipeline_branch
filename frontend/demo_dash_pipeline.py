@@ -80,6 +80,7 @@ from pipeline.schemas import STOPPED_QUALITY  # noqa: E402
 # detection_column come from demo_dash_modes, which already handles mode 3's
 # two special cases (a quality verdict with no numeric score, and presence
 # reported in words rather than as boxes).
+from ui_common import warm_resource_registry  # noqa: E402
 from demo_dash import FONTS, image_or_placeholder, tile, vlm_column  # noqa: E402
 from demo_dash_modes import (claimed_box_lines, detection_column,  # noqa: E402
                              quality_column)
@@ -886,6 +887,11 @@ def _prompts_panel(question, pairs):
 
 
 def main() -> None:
+    # Fill the resource registry before the first request arrives. Without it a
+    # browser holding a cached page - i.e. any tab still open across a restart -
+    # asks for its component chunks without ever re-requesting the index, and
+    # the upload dropzone silently fails to render. See ui_common.
+    warm_resource_registry(app)
     app.run(debug=False,
             host=os.environ.get("DASH_HOST", "0.0.0.0"),
             port=int(os.environ.get("DASH_PORT", "7873")))

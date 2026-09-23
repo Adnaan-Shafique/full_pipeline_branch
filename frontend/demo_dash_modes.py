@@ -68,6 +68,7 @@ from pipeline.schemas import STOPPED_QUALITY  # noqa: E402
 # than boxes, and frontend/demo_dash.py is frozen (see FROZEN.md) so it cannot grow
 # those cases. classical_quality_column is the frozen renderer, still used for
 # modes 1 and 2.
+from ui_common import warm_resource_registry  # noqa: E402
 from demo_dash import (FONTS, QUESTION_OPTIONS, FIRST,  # noqa: E402
                        image_or_placeholder, prompt_text,
                        quality_column as classical_quality_column,
@@ -1050,6 +1051,11 @@ def on_download(csv_clicks, json_clicks, mode):
 
 
 def main() -> None:
+    # Fill the resource registry before the first request arrives. Without it a
+    # browser holding a cached page - i.e. any tab still open across a restart -
+    # asks for its component chunks without ever re-requesting the index, and
+    # the upload dropzone silently fails to render. See ui_common.
+    warm_resource_registry(app)
     app.run(debug=False,
             host=os.environ.get("DASH_HOST", "0.0.0.0"),
             port=int(os.environ.get("DASH_PORT", "7872")))

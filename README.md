@@ -161,6 +161,29 @@ When the server cannot be reached the pipeline does not fail: it returns a
 **clearly labelled mock**, always `unknown`. Asserting yes or no when no model
 looked is the one thing this demo will not do.
 
+## When something looks broken
+
+**The upload dropzone is missing, and the log shows `"dash" is not a registered
+library ... []` with a 500 on `async-upload.js`.** A browser tab was left open
+across a server restart. The page never re-requested `/`, so the new process
+never rendered an index and its component chunks fail — and the chunk that
+fails is the one that draws the dropzone. **Hard-refresh the tab**
+(Ctrl-Shift-R). The server now warms that registry at startup, so this should
+only be reachable on an older build.
+
+**`IndexError: list index out of range` on `_dash-update-component`.** Same
+cause: the open page is running callback definitions from before a restart and
+posts the wrong number of arguments. Hard-refresh.
+
+**Every answer comes back `UNKNOWN (mock)`.** The model server is unreachable.
+That is the designed behaviour, not a failure — press **Check host** for the
+reason. Asserting yes or no when no model looked is the one thing this demo
+will not do.
+
+**A question you added is not in the dropdown.** It failed to load and was
+dropped. Press **Reload config/**, or run `python tools/preflight.py
+--skip-gpu`, which prints every registry warning.
+
 ## Where the documentation lives
 
 | File | For |

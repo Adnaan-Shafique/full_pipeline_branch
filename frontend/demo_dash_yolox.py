@@ -45,6 +45,7 @@ from pipeline.orchestrator import (IMAGE_EXTENSIONS, collect_images,  # noqa: E4
 from pipeline.questions import QUESTIONS, get_question  # noqa: E402
 
 # Shared renderers - see the module docstring on why these are imported.
+from ui_common import warm_resource_registry  # noqa: E402
 from demo_dash import (FONTS, QUESTION_OPTIONS, FIRST, prompt_text,  # noqa: E402
                        results_view, summary_view, tile)
 
@@ -468,6 +469,11 @@ def on_download(csv_clicks, json_clicks):
 
 
 def main() -> None:
+    # Fill the resource registry before the first request arrives. Without it a
+    # browser holding a cached page - i.e. any tab still open across a restart -
+    # asks for its component chunks without ever re-requesting the index, and
+    # the upload dropzone silently fails to render. See ui_common.
+    warm_resource_registry(app)
     app.run(debug=False,
             host=os.environ.get("DASH_HOST", "0.0.0.0"),
             port=int(os.environ.get("DASH_PORT", "7871")))

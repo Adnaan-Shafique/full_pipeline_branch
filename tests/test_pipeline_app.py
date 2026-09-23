@@ -311,6 +311,74 @@ check("and the run body is a plain function the tests can drive",
 check("execute_run is not itself a callback",
       "@app.callback" not in src.split("def execute_run(")[0].rsplit("\n\n", 1)[-1])
 
+print("\nthe resource registry is warmed before the server takes requests")
+# Dash fills app.registered_paths only while rendering the index. A browser
+# holding a cached page - any tab open across a restart - never re-requests the
+# index, so its component chunks 500 on an empty registry and the UPLOAD
+# DROPZONE silently fails to render. The symptom is a missing control, not an
+# error on screen, which is why this is warmed at startup rather than noted in
+# a document.
+import ui_common  # noqa: E402
+
+for _name in ("demo_dash_pipeline.py", "demo_dash_modes.py", "demo_dash_yolox.py"):
+    _src = (ROOT / "frontend" / _name).read_text()
+    check(f"{_name} warms the registry before app.run",
+          "warm_resource_registry(app)" in _src
+          and _src.index("warm_resource_registry(app)") < _src.index("app.run("),
+          _name)
+# demo_dash.py is frozen (FROZEN.md) and must not have grown the call.
+check("the frozen UI was left alone",
+      "warm_resource_registry" not in (ROOT / "frontend" / "demo_dash.py").read_text())
+
+
+class _FakeApp:
+    """An app whose index render populates the registry, like the real one."""
+
+    def __init__(self, explode=False):
+        self.registered_paths = {}
+        self.explode = explode
+        outer = self
+
+        class _Server:
+            def test_client(self):
+                return outer
+
+        self.server = _Server()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, path):
+        if self.explode:
+            raise RuntimeError("index render failed")
+        self.registered_paths["dash"] = {"x.js"}
+
+
+_app = _FakeApp()
+check("warming reports success and fills the registry",
+      ui_common.warm_resource_registry(_app) is True and "dash" in _app.registered_paths)
+# A UI that cannot warm up must still start - the first real page load fills
+# the registry exactly as it always did.
+check("a failed warm-up returns False rather than raising",
+      ui_common.warm_resource_registry(_FakeApp(explode=True)) is False)
+# ui_common must not drag the pipeline into the UI-only layer. Parsed, not
+# grepped: its docstring says the words "no pipeline imports", and a substring
+# check fails on the very sentence promising the property.
+import ast as _ast  # noqa: E402
+
+_imports = set()
+for _node in _ast.walk(_ast.parse((ROOT / "frontend" / "ui_common.py").read_text())):
+    if isinstance(_node, _ast.Import):
+        _imports.update(a.name.split(".")[0] for a in _node.names)
+    elif isinstance(_node, _ast.ImportFrom):
+        _imports.add((_node.module or "").split(".")[0])
+check("ui_common imports nothing from the backend",
+      not (_imports & {"pipeline", "quality_check", "foreground_segmentation"}),
+      str(sorted(_imports)))
+
 print("\nit imports the shared renderers rather than copying them")
 check("quality_column and detection_column come from demo_dash_modes",
       "from demo_dash_modes import" in src

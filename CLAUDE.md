@@ -303,6 +303,19 @@ opposite of what was found. Every Infra question is in this case today.
 **`yolox_input_size` is `(640, 480)`, not the stock square.** For portrait
 photographs the ratio is identical either way; only landscape diverges (by 4/3).
 
+**A browser tab left open across a restart lies to you.** Dash fills
+`app.registered_paths` only while rendering the index, so a tab that still has
+the page loaded never re-requests `/`, and the new process serves its component
+chunks from an empty registry: `"dash" is not a registered library. Registered
+libraries are: []`, 500 on `async-upload.js` — and the visible symptom is the
+**upload dropzone missing**, with nothing on screen saying why.
+`ui_common.warm_resource_registry()` renders the index in-process at startup so
+that cannot happen. The *other* half of a stale tab it cannot fix: a page whose
+callback definitions predate a signature change posts too few arguments and
+dash raises `IndexError: list index out of range` in `_prepare_grouping`. After
+changing any callback's Inputs/States, **hard-refresh the tab** (Ctrl-Shift-R).
+Both symptoms clear on one refresh; neither means the app is broken.
+
 **Never let a mock assert.** Mock and parse-failure paths return `unknown`
 (and `poor` for quality), always labelled. Asserting yes/no when no model
 looked is the one thing this demo must not do on screen.
