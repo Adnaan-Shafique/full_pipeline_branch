@@ -112,6 +112,53 @@ check("a server that reported nothing yields None, not zero",
 check("a nonsensical negative gap is clamped to zero",
       sample(400, server_ms=450).transport_ms == 0.0)
 
+print("\nqueue wait: measured at the semaphore, or inferred from the round trip")
+# gpu_api_server_v7 times the wait around the semaphore itself. llm_proxy_v3
+# could only infer it as proxy time minus server time, which is queueing PLUS
+# network PLUS proxy - on a fast, unloaded server almost entirely transport.
+# Tabulating the two as one reports saturation where nothing was queueing, so
+# the distinction has to survive all the way into the report.
+measured = result_of([sample(900, server_ms=850, queue_wait_ms=20,
+                             transport_overhead_ms=30) for _ in range(4)])
+inferred = result_of([sample(900, server_ms=850, queue_wait_ms=50,
+                             queue_wait_approx=True) for _ in range(4)])
+check("a measured queue wait is not flagged as approximate",
+      measured.queue_wait_is_approximate is False)
+check("an inferred one is", inferred.queue_wait_is_approximate is True)
+check("and says so out loud, so it cannot be quoted as a measurement",
+      any("APPROXIMATED" in w for w in inferred.warnings()),
+      str(inferred.warnings()))
+check("a measured run carries no such warning",
+      not any("APPROXIMATED" in w for w in measured.warnings()))
+# ANY, not ALL: one approximated value in a distribution changes what its
+# percentiles mean, so a mixed run must be flagged like a wholly inferred one.
+mixed_wait = result_of([sample(900, server_ms=850, queue_wait_ms=20),
+                        sample(900, server_ms=850, queue_wait_ms=50,
+                               queue_wait_approx=True)])
+check("one inferred sample among measured ones taints the distribution",
+      mixed_wait.queue_wait_is_approximate is True)
+check("a run with no queue figures at all is not called approximate",
+      result_of([sample(900, server_ms=850)]).queue_wait_is_approximate is False)
+check("transport overhead is reported when the proxy separates it out",
+      measured.transport_overhead().p50_ms == 30)
+check("and is absent, not zero, when it could not be separated",
+      inferred.transport_overhead().n == 0)
+# The saturation warning fires on the numbers alone, so against an older proxy
+# it can fire on transport. It still fires - the figure is an upper bound on
+# queueing - but it must not read as a measurement.
+loaded = result_of([sample(9000, server_ms=1000, queue_wait_ms=8000,
+                           queue_wait_approx=True) for _ in range(4)])
+saturation = [w for w in loaded.warnings() if "WAITING FOR A SLOT" in w]
+check("waiting dominating inference is still flagged when approximated",
+      len(saturation) == 1, str(loaded.warnings()))
+check("but that warning names the approximation",
+      "approximated" in saturation[0], saturation[0] if saturation else "")
+serialised = measured.to_dict(include_samples=False)
+check("the report carries the distinction, not just the console",
+      serialised["queue_wait_is_approximate"] is False
+      and serialised["transport_overhead_ms"]["p50_ms"] == 30,
+      str(serialised.get("transport_overhead_ms")))
+
 print("\none scenario, one model")
 mixed = result_of([sample(10, model="qwen3-vl"), sample(12, model="molmo-72b")])
 check("two models answering inside one scenario is flagged",
@@ -478,6 +525,79 @@ check("identical settings raise no comparability warning",
                 "sampling": {}, "transport": "direct"},
           "y": {"model": "y", "question": "q", "photographs": ["a"],
                 "sampling": {}, "transport": "direct"}}))
+
+print("\nthe findings reach report.md, not just the console")
+# ScenarioResult.warnings() is where the findings that should stop someone
+# quoting a number live. run_bench printed them as it went and stored them
+# under each scenario; a reader who only ever opens report.md saw none of it,
+# which made the "Read this first" section quietly incomplete.
+_with_scenarios = {"m": {"model": "m", "is_mock": False,
+                         "model_check": {"ok": True},
+                         "scenarios": {
+                             "batch": {"warnings": ["p95 queue wait exceeds"]},
+                             "ramp": {"levels": [
+                                 {"config": {"ramp_level": 8},
+                                  "warnings": ["12 requests came back 503"]}]}}}}
+_hoisted = _report.comparability_warnings(_with_scenarios)
+check("a scenario's own warning reaches the report",
+      any("batch" in w and "queue wait" in w for w in _hoisted), str(_hoisted))
+check("and a ramp level's, named by the concurrency it happened at",
+      any("concurrency 8" in w and "503" in w for w in _hoisted), str(_hoisted))
+
+print("\nthe two deploy files agree with each other")
+# A proxy image cap lower than the server's limit_mm_per_prompt refuses the
+# request with "is text-only" or "too many images" - neither of which mentions
+# the proxy, so both read as GPU-server faults. The caps are written in two
+# files and nothing at runtime compares them, so this does.
+_v7 = (ROOT / "deploy" / "gpu_api_server_v7.py").read_text()
+_v4 = (ROOT / "deploy" / "llm_proxy_v4.py").read_text()
+import ast as _ast  # noqa: E402
+_v7_tree = _ast.parse(_v7)
+_v7_names = {}
+for _node in _v7_tree.body:
+    _t = (getattr(_node.target, "id", "") if isinstance(_node, _ast.AnnAssign)
+          else getattr(_node.targets[0], "id", "") if isinstance(_node, _ast.Assign)
+          else "")
+    if _t in ("MODEL_CONFIGS", "EVICT_GROUPS"):
+        _v7_names[_t] = eval(compile(_ast.Expression(_node.value), "<v7>", "eval"))
+_configs = _v7_names.get("MODEL_CONFIGS", {})
+_server_caps = {n: (c.get("limit_mm_per_prompt") or {}).get("image", 0)
+                for n, c in _configs.items()}
+_vlms = {n for n, cap in _server_caps.items() if cap}
+check("all four VLMs are in the server's registry",
+      _vlms == {"qwen3-vl", "internvl", "pixtral", "molmo"}, str(sorted(_vlms)))
+check("and every one of them evicts the others, so two never share the card",
+      all(_v7_names.get("EVICT_GROUPS", {}).get(n) == "vlm" for n in _vlms),
+      str(_v7_names.get("EVICT_GROUPS")))
+import re as _re  # noqa: E402
+_caps_src = _re.search(r'_DEFAULT_IMAGE_CAPS\s*=\s*"([^"]+)"', _v4).group(1)
+_proxy_caps = {p.split(":")[0]: int(p.split(":")[1])
+               for p in _caps_src.split(",") if ":" in p}
+_expected_caps = {n: _server_caps[n] for n in _vlms}
+check("the proxy's default image caps match the server's, model for model",
+      _proxy_caps == _expected_caps,
+      f"proxy={_proxy_caps} server={_expected_caps}")
+# Molmo's is 1, not 4, and a proxy that let 4 through would get a vLLM error
+# from deep inside the engine rather than a clean 400 at the edge.
+check("molmo's cap is 1 on both sides, not quietly widened",
+      _proxy_caps.get("molmo") == 1 == _server_caps.get("molmo"))
+# The file on disk must stay production: the benchmark's settings are
+# environment overrides, so Step 5's restore is unsetting variables. A file
+# edited to 0.85 and committed is how the demo box comes back wrong.
+check("internvl on disk is still the production TP=2 @ 0.40",
+      _configs["internvl"]["tensor_parallel_size"] == 2
+      and _configs["internvl"]["gpu_memory_utilization"] == 0.40,
+      str(_configs.get("internvl")))
+check("and qwen3-vl still 0.60",
+      _configs["qwen3-vl"]["gpu_memory_utilization"] == 0.60)
+check("molmo is FP8, because 72B in bf16 does not fit on one H200",
+      _configs["molmo"].get("quantization") == "fp8")
+check("the server measures the queue wait itself",
+      "queue_wait_s" in _v7 and "sem.acquire" in _v7)
+check("and the proxy prefers the server's figure over its own approximation",
+      "queue_wait_is_approximate" in _v4 and 'body.get("queue_wait_s")' in _v4)
+check("the proxy declares repetition_penalty, which pydantic would else drop",
+      "repetition_penalty" in _v4 and "stop_sequences" in _v4)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

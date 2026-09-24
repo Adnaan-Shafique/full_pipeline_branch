@@ -1,10 +1,14 @@
 """Registry entries and prompt builders to add to gpu_api_server_v6.py, so
 pixtral and molmo can be benchmarked alongside qwen3-vl and internvl.
 
-THIS FILE DOES NOT RUN. It lives here so the change to the GPU server is
-version-controlled and reviewable next to the benchmark that depends on it.
-Copy the marked blocks into `gpu_api_server_v6.py` on 10.66.98.137, then follow
-`BENCHMARK_RUNBOOK.md`.
+SUPERSEDED AS A PROCEDURE. `deploy/gpu_api_server_v7.py` is the complete server
+with every block below already applied, and the runbook now says to copy that
+file rather than to paste from this one. Two copies of a change drift, and the
+one you would notice last is the one nobody runs — so treat v7 as the truth and
+this file as the annotated diff explaining what it did and why. It is still the
+right place to read `PIXTRAL_MISTRAL_FORMAT` and the FP8 reasoning below.
+
+THIS FILE DOES NOT RUN.
 
 ── Read this before pasting ─────────────────────────────────────────────────
 

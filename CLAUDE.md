@@ -30,7 +30,7 @@ No build step, no linter, no pytest. Suites are standalone scripts that print
 `N passed, M failed` and exit non-zero on failure.
 
 ```bash
-# Every suite (947 assertions across fourteen files)
+# Every suite (970 assertions across fourteen files)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 # One suite, with its output
@@ -72,9 +72,9 @@ Tests stub `cv2`, `dash` and `requests`. Measured on three interpreters:
 
 | Interpreter | Assertions | Suites failing |
 |---|---|---|
-| everything installed | **953** | 0 |
-| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **947** | 0 |
-| bare — nothing installed at all, `requests` and `pyyaml` included | **769** | 2, both pre-existing |
+| everything installed | **976** | 0 |
+| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **970** | 0 |
+| bare — nothing installed at all, `requests` and `pyyaml` included | **792** | 2, both pre-existing |
 
 Keep that middle row at zero — a suite that needs torch cannot run where it is
 most needed.
@@ -189,13 +189,28 @@ the OCR output.
 **holds one model at a time**, so a four-model comparison is four runs with a
 manual switch between them: one file per model, merged by `bench_report.py`.
 
-`BENCHMARK_RUNBOOK.md` is the procedure for the real boxes; `deploy/gpu_models_bench.py`
-holds the registry entries and prompt builders that must be pasted into
-`gpu_api_server_v6.py` before pixtral or molmo can be benchmarked at all — they
-are not in its registry, and its `_build_engine_input` knows only three prompt
-styles. **Molmo-72B cannot run on one H200 in bf16** (144 GB of weights against
-a 141 GB card), so that entry is FP8 and its quality numbers are not strictly
-comparable with the bf16 models.
+`BENCHMARK_RUNBOOK.md` is the procedure for the real boxes. The two servers it
+needs are **complete files, not patches**: `deploy/gpu_api_server_v7.py`
+replaces the operator's v6 and `deploy/llm_proxy_v4.py` replaces their v3.
+Pixtral and molmo were in neither registry, and v6's `_build_engine_input` knew
+only three prompt styles, so without them there is nothing to benchmark.
+`deploy/gpu_models_bench.py` is the same change as an annotated diff and is
+**no longer the procedure** — two copies of a change drift, and the one you
+notice last is the one nobody runs.
+
+**Molmo-72B cannot run on one H200 in bf16** (144 GB of weights against a
+141 GB card), so its entry is FP8 and its quality numbers are not strictly
+comparable with the bf16 models. `backend/bench/capacity.py` makes that
+arithmetic executable so it stays true when the hardware changes.
+
+**The benchmark's settings are environment variables, not edits to v7.**
+`MODEL_CONFIGS` on disk is always the production configuration, and
+`VLM_TP_*` / `VLM_GMU_*` / `VLM_LEN_*` / `VLM_CONC_*` / `VLM_QUANT_*` /
+`EAGER_LOAD` override it per run. That is what makes the runbook's "put the box
+back" step an `unset` rather than four remembered numbers, and
+`tests/test_bench.py` pins the file's values at production so a benchmark
+setting committed by accident fails a suite instead of coming back on a demo
+morning.
 
 Most of that package is about refusing to produce a misleading number — failed
 requests never enter a latency distribution, a 503 is its own outcome, mocks are
@@ -339,6 +354,17 @@ callback definitions predate a signature change posts too few arguments and
 dash raises `IndexError: list index out of range` in `_prepare_grouping`. After
 changing any callback's Inputs/States, **hard-refresh the tab** (Ctrl-Shift-R).
 Both symptoms clear on one refresh; neither means the app is broken.
+
+**Queue wait is measured in one place and approximated in another.**
+`gpu_api_server_v7` times the wait around the semaphore itself, so
+`queue_wait_s` is a measurement on both transports. `llm_proxy_v3` could only
+infer it as its own elapsed minus the GPU's — which is queueing *plus* network
+*plus* proxy, and on a fast, unloaded server almost entirely transport. Read as
+queue wait it reports saturation where nothing is queueing. `llm_proxy_v4`
+passes the server's figure through and sets `queue_wait_is_approximate` so the
+two can never be tabulated as one; `Sample.queue_wait_approx` carries it and
+`ScenarioResult.warnings()` says so. **Any** approximated sample taints the
+distribution, not only all of them.
 
 **A benchmark's failure mode is a confident wrong number, not a crash.** The
 two that would void a whole afternoon: counting a 4 ms connection refusal as a

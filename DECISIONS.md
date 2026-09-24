@@ -8,6 +8,80 @@ Newest first. Dates are when the decision was made, not when it was written up.
 
 ---
 
+## 2026-09-24 · Ship the operator whole servers, and put the benchmark's settings in the environment
+
+**Decision.** `deploy/gpu_api_server_v7.py` and `deploy/llm_proxy_v4.py` are
+complete replacements for the operator's running v6 and v3, not blocks to paste
+into them. The benchmark's own settings — internvl at TP=1, the raised
+`gpu_memory_utilization`, an empty `EAGER_LOAD` — are environment variables
+(`VLM_TP_*`, `VLM_GMU_*`, …) rather than values written into `MODEL_CONFIGS`,
+so the file on disk is always the production configuration.
+`deploy/gpu_models_bench.py` is kept as the annotated diff and demoted out of
+the procedure.
+
+**Why.** Two different failures, with the same shape: a change that half-lands
+and says nothing.
+
+Pasting seven blocks into a running server is an instruction that works until
+someone misses one. The symptom surfaces three steps later — a 400 that reads
+as a GPU fault, a prompt template that produces fluent answers about an image
+the model never saw — and nothing points back at the block. Copying a file has
+one failure mode, and `ast.parse` catches it in a second.
+
+Editing `MODEL_CONFIGS` for a benchmark is worse, because the damage is
+deferred. The run finishes, the numbers are fine, and the file still says
+internvl is TP=1 at 0.85 — which is wrong for production and wrong in a way
+nobody sees until mistral and qwen3-vl will not both fit on the card, on a
+morning when someone is demoing. The runbook's Step 5 already said "this is the
+step people skip"; that is a sentence admitting a design problem rather than
+fixing it. With the settings in the environment, restoring is `unset`, the
+default is right, and `tests/test_bench.py` fails if a benchmark value is ever
+committed into the file.
+
+**What it costs.** Two more files in `deploy/`, and the operator's v6 and v3
+are now history that this repo does not track — if they patch their running
+copy, our v7 will silently not contain it. The mitigation is that both files
+carry a `CHANGES FROM` header listing every difference with its reason, so a
+merge is readable rather than a diff hunt. The environment indirection also
+means a misconfigured shell can serve a run under settings nobody intended,
+which is why v7 logs every override as it applies it and reports them on
+`/models`, and why the harness records the serving configuration beside the
+numbers.
+
+---
+
+## 2026-09-24 · A queue wait that is measured, and one that is not, are different numbers
+
+**Decision.** `gpu_api_server_v7` measures the semaphore wait itself and returns
+it; `llm_proxy_v4` passes that figure through and reports what is left of the
+round trip separately as `transport_overhead_s`. When only the old
+approximation is available, it is still reported — but flagged, and any single
+approximated sample flags the whole distribution.
+
+**Why.** `llm_proxy_v3` computed `queue_wait_s` as its own elapsed minus the
+GPU's, and `BENCHMARKS.md` quoted it as the saturation signal: rising queue
+wait against flat server time means requests are waiting for one of the two
+concurrency slots. The arithmetic is right about what it contains and wrong
+about what it is. That difference is queueing *plus* network *plus* JSON
+encoding of a multi-megabyte data URI *plus* the proxy — and on a fast,
+unloaded server it is almost entirely the last three. Read as queue wait, an
+idle server looks saturated. The finding it was meant to produce is the one it
+would most reliably fabricate.
+
+Measuring at the semaphore is a few lines on the server and leaves nothing to
+infer. The subtraction is still useful once the real wait is known: what
+remains is transport, and "the proxy is expensive" and "the GPU is busy" are
+opposite findings with opposite fixes.
+
+**What it costs.** A run against an older proxy now carries a warning it did
+not before, and its queue figures are labelled an upper bound rather than a
+measurement — which is less convenient and more honest. Mixing such a run into
+a comparison is refused rather than smoothed over, so a half-upgraded pair of
+boxes produces a table with a caveat on it instead of a clean one that is
+quietly wrong.
+
+---
+
 ## 2026-09-24 · A benchmark that refuses more than it reports
 
 **Decision.** The benchmark harness excludes failed requests from latency

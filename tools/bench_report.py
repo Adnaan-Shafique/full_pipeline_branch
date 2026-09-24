@@ -78,6 +78,27 @@ def comparability_warnings(reports: dict) -> list:
                        f"Treat this file as void.")
         for w in r.get("warnings", []):
             out.append(f"{model}: {w}")
+        # Per-scenario warnings too. ScenarioResult.warnings() is where the
+        # findings that should stop someone quoting a number actually live -
+        # the queue wait dominating inference, the load generator falling
+        # behind its own schedule, two models answering inside one scenario.
+        # run_bench prints them as it goes and stores them under each scenario;
+        # a reader who only ever opens report.md saw none of it, which made
+        # this section quietly incomplete.
+        for name, block in sorted((r.get("scenarios") or {}).items()):
+            if not isinstance(block, dict):
+                continue
+            for w in block.get("warnings", []) or []:
+                out.append(f"{model} / {name}: {w}")
+            # The ramp block is not a ScenarioResult - it nests one per
+            # concurrency level, each carrying its own warnings, and the level
+            # itself is in that result's config rather than beside it.
+            for level in block.get("levels", []) or []:
+                if not isinstance(level, dict):
+                    continue
+                tag = (level.get("config") or {}).get("ramp_level", "?")
+                for w in level.get("warnings", []) or []:
+                    out.append(f"{model} / {name} at concurrency {tag}: {w}")
 
     def distinct(key):
         return {model: json.dumps(r.get(key), sort_keys=True, default=str)

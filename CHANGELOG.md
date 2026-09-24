@@ -11,6 +11,66 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v1.2 — The two servers, as complete files · 2026-09-24
+
+| Change |
+|---|
+| `deploy/gpu_api_server_v7.py` — the operator's v6 with pixtral, molmo, environment-overridable settings, a measured queue wait and a `/debug/prompt` bug fixed |
+| `deploy/llm_proxy_v4.py` — their v3 with all four VLMs allowlisted, image caps as data, two silently-dropped sampling fields declared, and the server's queue wait passed through |
+| `deploy/gpu_models_bench.py` demoted to the annotated diff; the runbook now says copy, not paste |
+| `Sample.queue_wait_approx` / `transport_overhead_ms`, and the warnings that keep the two kinds apart |
+| `bench_report.py` hoists per-scenario warnings into the report |
+
+v1.1 asked an operator to paste seven blocks into a running server. That is the
+kind of instruction that half-works: a block is missed, the symptom appears
+three steps later, and nothing says which. These are whole files, so the
+instruction is `cp` and the check is `ast.parse`.
+
+**The benchmark settings are no longer edits.** `VLM_TP_*`, `VLM_GMU_*`,
+`VLM_LEN_*`, `VLM_CONC_*`, `VLM_QUANT_*` and `EAGER_LOAD` override
+`MODEL_CONFIGS` from the environment, so the file on disk stays the production
+configuration and Step 5's restore is an `unset`. v7 logs every override as it
+applies it and reports them on `/models`, so a run records what actually served
+it. `tests/test_bench.py` pins the on-disk values at production — a benchmark
+setting committed by accident now fails a suite rather than coming back on a
+demo morning.
+
+**A `/debug/prompt` bug that would have defeated the check it exists for.**
+v6's else-branch called the InternVL prompt builder for *any* non-qwen model,
+so pixtral and molmo would have rendered an InternVL template there and the
+correct one at inference — the verification step disagreeing with the thing it
+verifies, in the direction that passes. v7 renders through the same
+`_render_prompt()` the inference path uses, and returns `expect_placeholder` so
+the runbook's table is answered by the server rather than by prose.
+
+**Queue wait is now measured, not inferred.** v7 times the wait around the
+semaphore itself; v3 could only compute proxy elapsed minus GPU elapsed, which
+is queueing plus network plus proxy. On a fast, unloaded server that is almost
+entirely transport, so reading it as queue wait reports saturation where
+nothing is queueing — and `BENCHMARKS.md` was quoting it as the saturation
+signal. v4 passes the server's figure through, reports the remainder separately
+as `transport_overhead_s`, and sets `queue_wait_is_approximate` so a run
+against an older proxy cannot be tabulated beside a measured one. One
+approximated sample taints a distribution, so the flag is `any`, not `all`.
+
+**Two sampling fields were being dropped at the edge.** v3's `InferRequest`
+declared neither `repetition_penalty` nor `stop_sequences`, and pydantic
+discards undeclared fields rather than rejecting them — so a client setting
+either had it removed silently while the GPU server's own default applied. A
+direct-versus-proxied comparison was running two different sampling
+configurations with nothing saying so.
+
+**Findings were reaching the console and not the report.** `run_bench` printed
+each scenario's warnings as it went and stored them under that scenario, but
+`bench_report.py` only read the top-level list — so report.md's "Read this
+first" omitted exactly the findings that should stop someone quoting a number.
+It now hoists them, ramp levels included, named by the concurrency they
+happened at.
+
+**970 assertions, fourteen suites** (976 with every dependency, 792 bare).
+
+---
+
 ## v1.1 — Benchmark runbook for the real boxes · 2026-09-24
 
 | Change |

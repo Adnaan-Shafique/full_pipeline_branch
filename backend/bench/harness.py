@@ -246,9 +246,18 @@ def make_caller(client, question, cfg) -> Callable:
         return Sample(
             wall_ms=wall_ms, outcome=OK,
             server_ms=ms("elapsed_s"),
-            # Present only through llm_proxy_v3; the direct path leaves them
-            # None, which the stats treat as absent rather than as zero.
+            # queue_wait_s is measured at the semaphore by gpu_api_server_v7,
+            # so it is present on BOTH transports there. Through llm_proxy_v3
+            # it was inferred from proxy time minus server time - the flag says
+            # which, and the stats refuse to tabulate the two as one. An older
+            # proxy sets neither, so `approx` is inferred from the shape of the
+            # response rather than trusted to be declared.
             queue_wait_ms=ms("queue_wait_s"),
+            queue_wait_approx=bool(response.get(
+                "queue_wait_is_approximate",
+                "queue_wait_s" in response and "transport_overhead_s" not in response
+                and client.transport == "proxy")),
+            transport_overhead_ms=ms("transport_overhead_s"),
             proxy_ms=ms("proxy_elapsed_s"),
             new_tokens=count("new_tokens"),
             prompt_tokens=count("prompt_tokens"),

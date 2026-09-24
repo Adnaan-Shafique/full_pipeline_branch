@@ -59,7 +59,7 @@ on however many models are done so far.
 "Streaming" here means how requests **arrive**, not how tokens leave — the
 pipeline calls `/infer`, which returns a complete answer.
 
-**Correction, from reading the server:** `gpu_api_server_v6.py` *does* expose
+**Correction, from reading the server:** the GPU server *does* expose
 `POST /infer/stream` as SSE. It is the pipeline client that never uses it, not
 the server that lacks it. So time-to-first-token is measurable with client
 work only — no server change — and that is now a real option rather than the
@@ -87,7 +87,7 @@ point the harness is not offering the rate it claims.
 
 | Measure | Why it is there |
 |---|---|
-| **queue wait** | `llm_proxy_v3` returns `queue_wait_s` = its own elapsed minus the GPU's. With `max_concurrent` of 2 on the VLMs, the third caller waits here rather than being refused — so a rising queue wait against flat server time is saturation, long before any 503. The report says so when waiting exceeds inference. |
+| **queue wait** | With `max_concurrent` of 2 on the VLMs, the third caller waits for a semaphore slot rather than being refused — so a rising queue wait against flat server time is saturation, long before any 503. `gpu_api_server_v7` times that wait **at the semaphore** and `llm_proxy_v4` passes the figure through. `llm_proxy_v3` could only approximate it as its own elapsed minus the GPU's, which is queueing plus network plus proxy; the harness records which kind it got and the report refuses to tabulate the two as one. |
 | **output tokens / sec** | A model that writes longer answers takes longer. Comparing raw latency across models compares verbosity; tokens per second is what survives that. |
 | **contract compliance** | Every prompt ends with a JSON contract, and `parse_vlm_answer` is tolerant in four descending tiers. A model that never emits valid JSON still produces answers and **looks fine** — it is one prompt edit from producing nothing. This is reported first, before any latency. |
 | **unparseable rate** | Replies the parser gave up on arrive as `unknown`, indistinguishable from an honest `unknown`. Only the tier tells them apart. |
@@ -185,7 +185,7 @@ one, and the difference should be stated whenever these results are quoted.
 |---|---|
 | **Accuracy** | No ground truth. Add a labels file and this becomes possible; until then, agreement and compliance only. |
 | **Time to first token** | The server **does** offer `POST /infer/stream` (SSE); the pipeline client does not use it, so the harness does not either. Adding it is client-side work only: consume the event stream, record the first `data:` chunk into a new `Sample.first_token_ms`. Worth doing if perceived responsiveness matters more than total latency — on a 72B it is the difference between "slow" and "frozen". |
-| **Queue wait, on the direct transport** | `queue_wait_s` is computed by `llm_proxy_v3`, not by the GPU server, so it is only present when `--transport proxy`. On the direct path the same quantity has to be inferred from client wall-clock minus `elapsed_s`, which also includes network. |
+| **Transport overhead, against an older proxy** | `transport_overhead_s` — the round trip minus the server's own time minus the queue wait — needs a *measured* queue wait to subtract, so `llm_proxy_v4` reports it and nothing else can. Against `llm_proxy_v3` the two quantities are fused into one approximation and cannot be separated after the fact. Queue wait itself is no longer proxy-only: `gpu_api_server_v7` returns it on the direct path too. |
 | **VRAM, GPU utilisation, cost** | Not visible from an HTTP client. Read them on the server during a run. |
 | **Quality of the reasoning text** | Only its parseability and length. Judging the prose needs a human or a second model, and both are separate exercises. |
 | **Detector accuracy** | `tools/smoke_yolox.py` covers that; this is about the model leg. |
@@ -205,7 +205,9 @@ one, and the difference should be stated whenever these results are quoted.
 | `backend/bench/capacity.py` | will this model fit on this card, and what is left for KV |
 | `tests/test_bench.py` | assertions, mostly about refusing to mislead |
 | `BENCHMARK_RUNBOOK.md` | **the actual procedure** for these boxes, model by model |
-| `deploy/gpu_models_bench.py` | the registry entries and prompt builders to paste into the GPU server |
+| `deploy/gpu_api_server_v7.py` | drop-in replacement for the v6 GPU server: pixtral and molmo, environment-overridable settings, measured queue wait, `/metrics/reset` |
+| `deploy/llm_proxy_v4.py` | drop-in replacement for the v3 proxy: all four VLMs allowlisted, image caps as data, forwarded sampling fields, queue wait passed through |
+| `deploy/gpu_models_bench.py` | the annotated diff behind v7, kept for reading what changed and why — no longer the procedure |
 
 Output lands in `bench_runs/<run_id>/` — one `<model>.json` per model, plus
 `report.md` and `comparison.csv` once merged. It is gitignored: these are

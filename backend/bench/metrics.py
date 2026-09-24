@@ -65,13 +65,26 @@ class Sample:
     response_chars: int = 0
     error: str = ""
     # ── Straight from the server, when it offers them ────────────────────────
-    # llm_proxy_v3 returns queue_wait_s = proxy_elapsed_s - elapsed_s, which is
-    # time spent waiting for one of the GPU server's max_concurrent semaphore
-    # slots plus network. Its own author calls it the single most useful
-    # saturation signal, and he is right: rising queue_wait with flat server
-    # time is a queue forming, which is invisible in wall-clock alone.
+    # Time spent waiting for one of the GPU server's max_concurrent semaphore
+    # slots. Rising queue_wait with flat server time is a queue forming, which
+    # is invisible in wall-clock alone - the single most useful saturation
+    # signal here.
+    #
+    # WHERE IT COMES FROM MATTERS. gpu_api_server_v7 measures the wait around
+    # the semaphore itself and llm_proxy_v4 passes that figure through.
+    # llm_proxy_v3 could only approximate it as proxy_elapsed - elapsed, which
+    # is queueing PLUS network PLUS proxy - and on a fast, unloaded server that
+    # approximation is almost entirely transport, so reading it as queue wait
+    # says the server is saturated when nothing is queueing at all. v4 sets
+    # queue_wait_is_approximate so the two can never be tabulated as one.
     queue_wait_ms: Optional[float] = None
+    queue_wait_approx: bool = False
     proxy_ms: Optional[float] = None
+    # v4 only: what is left of the round trip once the server's own accounting
+    # and the queue wait are subtracted - network, JSON encoding of a
+    # multi-megabyte data URI, and the proxy. "The proxy is expensive" and "the
+    # GPU is busy" are opposite findings, and this is what tells them apart.
+    transport_overhead_ms: Optional[float] = None
     # Output length, because a model that writes longer answers takes longer.
     # Comparing latency across models without this compares VERBOSITY, not
     # speed - tokens_per_sec is the figure that survives that.
@@ -225,9 +238,21 @@ class ScenarioResult:
         here rather than being refused, so a rising queue wait against a flat
         server time is the saturation signal - the 503 only arrives once the
         wait exceeds the server's QUEUE_TIMEOUT_S.
+
+        Against llm_proxy_v3 these values are an approximation that also
+        contains network and proxy time; see `Sample.queue_wait_ms` and the
+        warning in `warnings()`.
         """
         return LatencyStats.from_values(
             [s.queue_wait_ms for s in self.samples if s.outcome in TIMED_OUTCOMES])
+
+    @property
+    def queue_wait_is_approximate(self) -> bool:
+        """True when ANY timed sample's queue wait was inferred rather than
+        measured. Any, not all: one approximated value in a distribution is
+        enough to make its percentiles mean something different."""
+        return any(s.queue_wait_approx for s in self.samples
+                   if s.outcome in TIMED_OUTCOMES and s.queue_wait_ms is not None)
 
     def output_tokens(self) -> LatencyStats:
         """Reusing the stats shape for token counts: a model that writes twice
@@ -235,6 +260,17 @@ class ScenarioResult:
         return LatencyStats.from_values(
             [float(s.new_tokens) for s in self.samples
              if s.outcome in TIMED_OUTCOMES and s.new_tokens])
+
+    def transport_overhead(self) -> LatencyStats:
+        """Round trip minus the server's own time minus the queue wait.
+
+        Only llm_proxy_v4 reports it; everywhere else this is empty, which is
+        correct - the quantity cannot be separated out without a measured
+        queue wait to subtract.
+        """
+        return LatencyStats.from_values(
+            [s.transport_overhead_ms for s in self.samples
+             if s.outcome in TIMED_OUTCOMES])
 
     def tokens_per_sec(self) -> LatencyStats:
         return LatencyStats.from_values(
@@ -286,13 +322,22 @@ class ScenarioResult:
                 f"the rate actually offered")
         queue = self.queue_wait()
         server = self.server_latency()
+        if queue.n and self.queue_wait_is_approximate:
+            out.append(
+                "queue wait here is APPROXIMATED as proxy time minus server "
+                "time, which also contains network and proxy overhead - it is "
+                "an upper bound on queueing, not a measurement of it. Run "
+                "against gpu_api_server_v7 through llm_proxy_v4 for the real "
+                "figure")
         if queue.n and queue.p95_ms and server.p50_ms and queue.p95_ms > server.p50_ms:
             out.append(
                 f"p95 queue wait ({queue.p95_ms:.0f} ms) exceeds the median time "
                 f"the model itself spent ({server.p50_ms:.0f} ms) - most of the "
                 f"latency here is WAITING FOR A SLOT, not inference. Compare "
                 f"against max_concurrent for this model before reading these "
-                f"numbers as model speed")
+                f"numbers as model speed"
+                + (" (and note the queue figure is approximated here)"
+                   if self.queue_wait_is_approximate else ""))
         tokens = self.output_tokens()
         if tokens.n and tokens.stdev_ms and tokens.mean_ms and \
                 tokens.stdev_ms > tokens.mean_ms * 0.5:
@@ -320,6 +365,8 @@ class ScenarioResult:
             "latency_server_ms": asdict(self.server_latency()),
             "latency_transport_ms": asdict(self.transport_latency()),
             "queue_wait_ms": asdict(self.queue_wait()),
+            "queue_wait_is_approximate": self.queue_wait_is_approximate,
+            "transport_overhead_ms": asdict(self.transport_overhead()),
             "output_tokens": asdict(self.output_tokens()),
             "tokens_per_sec": asdict(self.tokens_per_sec()),
             # Present only on mock runs, and named so nobody quotes it.
