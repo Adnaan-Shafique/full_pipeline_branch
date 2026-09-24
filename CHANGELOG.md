@@ -11,6 +11,50 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v1.1 — Benchmark runbook for the real boxes · 2026-09-24
+
+| Change |
+|---|
+| `BENCHMARK_RUNBOOK.md` — step by step against 10.66.98.137 and the proxy |
+| `deploy/gpu_models_bench.py` — registry entries and prompt builders to paste into the GPU server |
+| `backend/bench/capacity.py` — will a model fit on a card |
+| the harness records `queue_wait_s`, output tokens, and the serving config |
+
+Written after reading `gpu_api_server_v6.py` and `llm_proxy_v3.py`. Three
+findings changed the plan.
+
+**Pixtral and Molmo are not in the server's registry**, so no load command
+works today: they need new `MODEL_CONFIGS` entries *and* new prompt builders,
+since `_build_engine_input` knows only `raw`, `qwen_vl` and `internvl`. The
+proxy rejects them twice more — `AVAILABLE_MODELS` (422) and `MODEL_IMAGE_CAPS`
+deriving `VISION_MODELS` (400 "is text-only").
+
+**Molmo-72B cannot run on one H200 in bf16.** 72B x 2 bytes is 144 GB of
+weights against a 141 GB card, over the limit before any KV cache. The entry
+uses FP8, which is the only way to honour one-GPU — and makes its answer
+quality not strictly comparable with the bf16 models, and its latency
+flattering. `capacity.py` makes that arithmetic executable so it survives a
+hardware change.
+
+**`internvl` ships TP=2 @ 0.40**, spanning both GPUs. On one GPU it needs TP=1,
+and 0.40 is then too small for 76 GB of weights — both values change together
+or the load fails.
+
+Two corrections to v1.0: the GPU server **does** expose `POST /infer/stream`
+(SSE), so time-to-first-token is client-side work rather than impossible; and
+model switching is scriptable through `/models/{name}/load` and `/unload`,
+though not through the proxy.
+
+The harness now records `queue_wait_s` — the proxy's own saturation signal, and
+with `max_concurrent` of 2 the thing that separates "slow" from "busy" — plus
+output token counts, so latency comparisons are not just comparing verbosity,
+and the serving config (TP, gpu_memory_utilization, resident models) beside
+every number.
+
+**947 assertions, fourteen suites** (953 with every dependency, 769 bare).
+
+---
+
 ## v1.0 — Benchmarking · 2026-09-24
 
 | Change |

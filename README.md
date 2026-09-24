@@ -190,6 +190,7 @@ dropped. Press **Reload config/**, or run `python tools/preflight.py
 |---|---|
 | `WALKTHROUGH.md` | **how to read this repository** — start here if the code is new to you |
 | `BENCHMARKS.md` | comparing the four VLMs, and load-testing the pipeline |
+| `BENCHMARK_RUNBOOK.md` | **step by step** on the real boxes: loading each model, running, restoring |
 | `SETUP.md` | installing on a fresh host |
 | `YOLOX_SETUP.md`, `COPY_FROM_AISERVER.md` | the detector, and the two files git does not carry |
 | `PROXY.md` | reaching the model through the proxy |

@@ -12,6 +12,7 @@ and a separate report step merges whatever files exist.
     scenarios.py  batch / continuous / parallel arrival patterns, and the ramp
     harness.py    driving the real client, the model guard, cold-load warmup
     quality.py    contract compliance, decisiveness, cross-model agreement
+    capacity.py   will a model fit on a card, and what is left for KV cache
 
 `BENCHMARKS.md` is the plan and the how-to. Read it before running anything
 against a shared GPU.

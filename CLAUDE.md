@@ -30,7 +30,7 @@ No build step, no linter, no pytest. Suites are standalone scripts that print
 `N passed, M failed` and exit non-zero on failure.
 
 ```bash
-# Every suite (933 assertions across fourteen files)
+# Every suite (947 assertions across fourteen files)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 # One suite, with its output
@@ -72,9 +72,9 @@ Tests stub `cv2`, `dash` and `requests`. Measured on three interpreters:
 
 | Interpreter | Assertions | Suites failing |
 |---|---|---|
-| everything installed | **939** | 0 |
-| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **933** | 0 |
-| bare — nothing installed at all, `requests` and `pyyaml` included | **755** | 2, both pre-existing |
+| everything installed | **953** | 0 |
+| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **947** | 0 |
+| bare — nothing installed at all, `requests` and `pyyaml` included | **769** | 2, both pre-existing |
 
 Keep that middle row at zero — a suite that needs torch cannot run where it is
 most needed.
@@ -188,6 +188,14 @@ the OCR output.
 `backend/bench/` and `BENCHMARKS.md`. Built around the constraint that the GPU
 **holds one model at a time**, so a four-model comparison is four runs with a
 manual switch between them: one file per model, merged by `bench_report.py`.
+
+`BENCHMARK_RUNBOOK.md` is the procedure for the real boxes; `deploy/gpu_models_bench.py`
+holds the registry entries and prompt builders that must be pasted into
+`gpu_api_server_v6.py` before pixtral or molmo can be benchmarked at all — they
+are not in its registry, and its `_build_engine_input` knows only three prompt
+styles. **Molmo-72B cannot run on one H200 in bf16** (144 GB of weights against
+a 141 GB card), so that entry is FP8 and its quality numbers are not strictly
+comparable with the bf16 models.
 
 Most of that package is about refusing to produce a misleading number — failed
 requests never enter a latency distribution, a 503 is its own outcome, mocks are

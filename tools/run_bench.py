@@ -200,6 +200,38 @@ def main() -> int:
         report["model_check"] = {"ok": check.ok, "detail": check.detail,
                                  "registry": sorted(check.registry)}
         print(f"model check: {check.detail}")
+
+        # What the server was actually running, recorded WITH the numbers. A
+        # latency figure without the configuration that produced it is an
+        # anecdote: a model given twice the KV cache queues later, which looks
+        # exactly like being faster.
+        snapshot = harness.serving_snapshot(client)
+        report["serving"] = {
+            "config": harness.config_of(snapshot, args.model),
+            "resident_models": harness.resident_models(snapshot),
+            "health": snapshot.get("health"),
+            "metrics_before": snapshot.get("metrics"),
+        }
+        serving = report["serving"]["config"]
+        resident = report["serving"]["resident_models"]
+        if serving:
+            print(f"  serving: TP={serving.get('tensor_parallel_size')} "
+                  f"gpu_mem={serving.get('gpu_memory_utilization')} "
+                  f"max_concurrent={serving.get('max_concurrent')} "
+                  f"max_model_len={serving.get('max_model_len')}")
+        if resident:
+            print(f"  resident on the box: {', '.join(str(r) for r in resident)}")
+            # On a one-model-at-a-time server, a model that is not resident is
+            # about to be lazy-loaded inside the warm-up - which is fine and is
+            # what the cold-load figure measures. A DIFFERENT one being resident
+            # is the thing worth flagging before minutes of GPU time are spent.
+            others = [r for r in resident if r not in (args.model, "mistral")]
+            if others:
+                note = (f"another VLM is resident ({', '.join(others)}) - loading "
+                        f"{args.model!r} will evict it, and the first request "
+                        f"will pay that load")
+                report["warnings"].append(note)
+                print(f"  ! {note}")
         if not check.ok:
             print("\nAborting: benchmarking a model the server is not serving "
                   "produces a result file that looks fine and is wrong.")
@@ -329,6 +361,15 @@ def main() -> int:
         except Exception as exc:
             report["warnings"].append(f"the three-mode run failed: {exc}")
             print(f"  failed: {exc}")
+
+    # A second snapshot: the server's own counters over the run, and the VRAM
+    # it ended up at. /metrics is cumulative, so before-and-after is what makes
+    # it readable, and the VRAM reading is the only way to see whether the
+    # model fitted comfortably or scraped in.
+    if not args.mock:
+        after = harness.serving_snapshot(client)
+        report["serving"]["metrics_after"] = after.get("metrics")
+        report["serving"]["health_after"] = after.get("health")
 
     dest = out_dir / f"{args.model}.json"
     dest.write_text(json.dumps(report, indent=2, default=str))

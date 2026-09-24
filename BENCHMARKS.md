@@ -56,9 +56,14 @@ on however many models are done so far.
 
 ### The three arrival patterns
 
-There is no token streaming anywhere in this pipeline — `/infer` returns a
-complete answer — so "streaming" here means how requests **arrive**, not how
-tokens leave.
+"Streaming" here means how requests **arrive**, not how tokens leave — the
+pipeline calls `/infer`, which returns a complete answer.
+
+**Correction, from reading the server:** `gpu_api_server_v6.py` *does* expose
+`POST /infer/stream` as SSE. It is the pipeline client that never uses it, not
+the server that lacks it. So time-to-first-token is measurable with client
+work only — no server change — and that is now a real option rather than the
+impossibility this file first claimed. See "What is not measured" below.
 
 | Scenario | Shape | The question it answers |
 |---|---|---|
@@ -82,6 +87,8 @@ point the harness is not offering the rate it claims.
 
 | Measure | Why it is there |
 |---|---|
+| **queue wait** | `llm_proxy_v3` returns `queue_wait_s` = its own elapsed minus the GPU's. With `max_concurrent` of 2 on the VLMs, the third caller waits here rather than being refused — so a rising queue wait against flat server time is saturation, long before any 503. The report says so when waiting exceeds inference. |
+| **output tokens / sec** | A model that writes longer answers takes longer. Comparing raw latency across models compares verbosity; tokens per second is what survives that. |
 | **contract compliance** | Every prompt ends with a JSON contract, and `parse_vlm_answer` is tolerant in four descending tiers. A model that never emits valid JSON still produces answers and **looks fine** — it is one prompt edit from producing nothing. This is reported first, before any latency. |
 | **unparseable rate** | Replies the parser gave up on arrive as `unknown`, indistinguishable from an honest `unknown`. Only the tier tells them apart. |
 | **unknown rate** | A model that is unknown on everything has told you nothing. One that is never unknown is probably guessing. |
@@ -177,7 +184,8 @@ one, and the difference should be stated whenever these results are quoted.
 | Not measured | Why |
 |---|---|
 | **Accuracy** | No ground truth. Add a labels file and this becomes possible; until then, agreement and compliance only. |
-| **Time to first token** | No streaming endpoint exists. If one is added, `Sample` gains a `first_token_ms` and `continuous` becomes far more informative. |
+| **Time to first token** | The server **does** offer `POST /infer/stream` (SSE); the pipeline client does not use it, so the harness does not either. Adding it is client-side work only: consume the event stream, record the first `data:` chunk into a new `Sample.first_token_ms`. Worth doing if perceived responsiveness matters more than total latency — on a 72B it is the difference between "slow" and "frozen". |
+| **Queue wait, on the direct transport** | `queue_wait_s` is computed by `llm_proxy_v3`, not by the GPU server, so it is only present when `--transport proxy`. On the direct path the same quantity has to be inferred from client wall-clock minus `elapsed_s`, which also includes network. |
 | **VRAM, GPU utilisation, cost** | Not visible from an HTTP client. Read them on the server during a run. |
 | **Quality of the reasoning text** | Only its parseability and length. Judging the prose needs a human or a second model, and both are separate exercises. |
 | **Detector accuracy** | `tools/smoke_yolox.py` covers that; this is about the model leg. |
@@ -194,7 +202,10 @@ one, and the difference should be stated whenever these results are quoted.
 | `backend/bench/scenarios.py` | the arrival patterns and the ramp |
 | `backend/bench/harness.py` | the real client, the model guard, cold-load warm-up |
 | `backend/bench/quality.py` | compliance, decisiveness, agreement |
-| `tests/test_bench.py` | 102 assertions, mostly about refusing to mislead |
+| `backend/bench/capacity.py` | will this model fit on this card, and what is left for KV |
+| `tests/test_bench.py` | assertions, mostly about refusing to mislead |
+| `BENCHMARK_RUNBOOK.md` | **the actual procedure** for these boxes, model by model |
+| `deploy/gpu_models_bench.py` | the registry entries and prompt builders to paste into the GPU server |
 
 Output lands in `bench_runs/<run_id>/` — one `<model>.json` per model, plus
 `report.md` and `comparison.csv` once merged. It is gitignored: these are

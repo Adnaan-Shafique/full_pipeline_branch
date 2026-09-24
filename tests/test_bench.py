@@ -38,6 +38,14 @@ def sample(ms, outcome=OK, **kw):
     return Sample(wall_ms=ms, outcome=outcome, **kw)
 
 
+def _raises(fn):
+    try:
+        fn()
+    except Exception:
+        return True
+    return False
+
+
 def result_of(samples, wall_s=1.0, scenario="batch", model="m"):
     r = ScenarioResult(scenario=scenario, model=model, wall_s=wall_s)
     r.samples = list(samples)
@@ -362,6 +370,63 @@ unmeasured = quality.per_stage_breakdown(
 check("a stage that was not measured is absent, not reported as instant",
       "quality" not in unmeasured["_measured_stages"],
       str(unmeasured["_measured_stages"]))
+
+print("\nwill it fit? the arithmetic that decides what can be benchmarked")
+from bench import capacity  # noqa: E402
+
+# The finding this module exists for. 72B x 2 bytes is 144 GB against a 141 GB
+# card - Molmo-72B cannot load on one H200 in bf16 at ANY gpu_memory_utilization.
+molmo = capacity.fit_on_gpu("molmo-72b", 72, dtype="bf16", gpu_memory_utilization=0.95)
+check("molmo-72b does not fit on one H200 in bf16", not molmo.fits, molmo.reason)
+check("and the reason names the weights, not the budget",
+      "at any gpu_memory_utilization" in molmo.reason, molmo.reason)
+# FP8 halves the weights and is the only way to honour "one GPU" for it.
+molmo_fp8 = capacity.fit_on_gpu("molmo-72b", 72, dtype="fp8",
+                                gpu_memory_utilization=0.90)
+check("at fp8 it fits with real KV cache left",
+      molmo_fp8.usable and molmo_fp8.kv_gb > 40, molmo_fp8.reason)
+check("smallest_working_dtype picks fp8, not something more aggressive",
+      capacity.smallest_working_dtype("molmo-72b", 72,
+                                      gpu_memory_utilization=0.90) == "fp8")
+# Sharding is the other way out, and the module should say so.
+check("TP=2 makes bf16 fit",
+      capacity.fit_on_gpu("molmo-72b", 72, dtype="bf16", tensor_parallel=2,
+                          gpu_memory_utilization=0.85).usable)
+
+# The three that do fit on one card in bf16.
+for name, params in (("pixtral-12b", 12), ("qwen3-vl", 30), ("internvl-38b", 38)):
+    fit = capacity.fit_on_gpu(name, params, dtype="bf16", gpu_memory_utilization=0.85)
+    check(f"{name} fits on one H200 in bf16", fit.usable, fit.reason)
+
+# internvl at TP=1 needs more than its shipped 0.40: 38B bf16 is 76 GB and
+# 0.40 of 141 is 56. This is the edit the runbook calls out, pinned.
+shipped = capacity.fit_on_gpu("internvl-38b", 38, dtype="bf16",
+                              gpu_memory_utilization=0.40, tensor_parallel=1)
+check("internvl at its shipped 0.40 does NOT fit on one card", not shipped.fits,
+      shipped.reason)
+check("and the reason points at the budget, not the card",
+      "raise gpu_memory_utilization" in shipped.reason, shipped.reason)
+
+# Anything already resident comes out of the budget - mistral's ~21 GB is the
+# difference between internvl loading and not.
+with_mistral = capacity.fit_on_gpu("internvl-38b", 38, dtype="bf16",
+                                   gpu_memory_utilization=0.85,
+                                   already_resident_gb=21.0)
+without = capacity.fit_on_gpu("internvl-38b", 38, dtype="bf16",
+                              gpu_memory_utilization=0.85)
+check("a resident model reduces the KV headroom by its own size",
+      abs((without.kv_gb - with_mistral.kv_gb) - 21.0) < 1e-6,
+      f"{without.kv_gb} vs {with_mistral.kv_gb}")
+
+# A model that technically loads but has no cache left is flagged, because its
+# concurrency numbers would describe the cache rather than the model.
+tight = capacity.fit_on_gpu("tight", 60, dtype="bf16", gpu_memory_utilization=0.88)
+check("a model with almost no KV cache loads but is not usable",
+      tight.fits and not tight.usable, tight.reason)
+check("and says the concurrency figures would be about the cache",
+      "describes the cache" in tight.reason, tight.reason)
+check("an unknown dtype is rejected rather than guessed",
+      _raises(lambda: capacity.fit_on_gpu("x", 1, dtype="float4")))
 
 print("\nthe CLI refuses what it should")
 cli = (ROOT / "tools" / "run_bench.py").read_text()

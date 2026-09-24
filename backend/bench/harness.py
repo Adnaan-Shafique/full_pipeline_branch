@@ -105,6 +105,85 @@ def verify_model(client, requested: str) -> ModelCheck:
     return check
 
 
+def serving_snapshot(client) -> dict:
+    """What the server was actually running, recorded with the numbers.
+
+    A latency figure without the configuration that produced it is not a
+    measurement, it is an anecdote. With one model resident at a time and the
+    registry edited between runs, `tensor_parallel_size` and
+    `gpu_memory_utilization` can differ from run to run without anyone
+    noticing - and a model given twice the KV cache will hold more concurrent
+    requests before it queues, which looks exactly like being faster.
+
+    Everything here is read-only and best-effort: a server that does not expose
+    an endpoint costs that field, never the run. Through llm_proxy_v3 these are
+    /v1/gpu-models, /v1/gpu-health and /v1/metrics; direct they are /models,
+    /health and /metrics.
+    """
+    from .metrics import OK  # noqa: F401  - keeps the import surface obvious
+
+    out: dict = {}
+    endpoints = client.endpoints
+    probes = [
+        ("registry", getattr(endpoints, "registry", None)),
+        ("health", getattr(endpoints, "gpu_health", None) or getattr(endpoints, "health", None)),
+    ]
+    for key, path in probes:
+        if not path:
+            continue
+        try:
+            from pipeline.stage3_vlm import _get
+            out[key] = _get(client.base, path, timeout=30, headers=client.headers)
+        except Exception as exc:
+            out[key] = {"error": f"{type(exc).__name__}: {exc}"}
+    # /metrics is not in the Endpoints table - it is an observability extra
+    # rather than part of the pipeline's contract, so it is probed by hand and
+    # its absence is unremarkable.
+    metrics_path = ("/v1/metrics" if getattr(client, "transport", "") == "proxy"
+                    else "/metrics")
+    try:
+        from pipeline.stage3_vlm import _get
+        out["metrics"] = _get(client.base, metrics_path, timeout=30,
+                              headers=client.headers)
+    except Exception as exc:
+        out["metrics"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
+def config_of(snapshot: dict, model: str) -> dict:
+    """The one model's serving configuration, pulled out of a snapshot.
+
+    The GPU server's /models returns a list of ModelInfo; the proxy passes it
+    through unchanged at /v1/gpu-models, so one reader handles both.
+    """
+    registry = (snapshot or {}).get("registry")
+    entries = registry if isinstance(registry, list) else []
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("name") == model:
+            return {k: entry.get(k) for k in (
+                "name", "loaded", "modality", "tensor_parallel_size",
+                "max_model_len", "max_concurrent", "gpu_memory_utilization",
+                "max_images", "quantization", "error")}
+    return {}
+
+
+def resident_models(snapshot: dict) -> list:
+    """Which models the server says are loaded RIGHT NOW.
+
+    On a one-model-at-a-time box this is the check that catches a switch that
+    silently failed: the registry still lists every model, but `loaded` is true
+    for only the resident one, and /health names it outright.
+    """
+    health = (snapshot or {}).get("health")
+    if isinstance(health, dict) and isinstance(health.get("loaded_models"), list):
+        return list(health["loaded_models"])
+    registry = (snapshot or {}).get("registry")
+    if isinstance(registry, list):
+        return [e.get("name") for e in registry
+                if isinstance(e, dict) and e.get("loaded")]
+    return []
+
+
 def confirm_served_model(sample: Sample, requested: str) -> Optional[str]:
     """The second half of the guard, run on the warm-up's own response.
 
@@ -152,10 +231,27 @@ def make_caller(client, question, cfg) -> Callable:
         wall_ms = (time.perf_counter() - t0) * 1000
         text = response.get("text", "") or ""
         answer, _reasoning, tier = parse_vlm_answer_tiered(text)
-        server_s = response.get("elapsed_s")
+
+        def ms(key):
+            value = response.get(key)
+            return float(value) * 1000 if value is not None else None
+
+        def count(key):
+            value = response.get(key)
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
         return Sample(
             wall_ms=wall_ms, outcome=OK,
-            server_ms=(float(server_s) * 1000 if server_s is not None else None),
+            server_ms=ms("elapsed_s"),
+            # Present only through llm_proxy_v3; the direct path leaves them
+            # None, which the stats treat as absent rather than as zero.
+            queue_wait_ms=ms("queue_wait_s"),
+            proxy_ms=ms("proxy_elapsed_s"),
+            new_tokens=count("new_tokens"),
+            prompt_tokens=count("prompt_tokens"),
             model=str(response.get("model", "")),
             question_id=question.id, stem=item.stem,
             answer=answer, parse_tier=tier, response_chars=len(text))

@@ -64,6 +64,25 @@ class Sample:
     parse_tier: str = ""         # see stage3_vlm.PARSE_TIERS
     response_chars: int = 0
     error: str = ""
+    # ── Straight from the server, when it offers them ────────────────────────
+    # llm_proxy_v3 returns queue_wait_s = proxy_elapsed_s - elapsed_s, which is
+    # time spent waiting for one of the GPU server's max_concurrent semaphore
+    # slots plus network. Its own author calls it the single most useful
+    # saturation signal, and he is right: rising queue_wait with flat server
+    # time is a queue forming, which is invisible in wall-clock alone.
+    queue_wait_ms: Optional[float] = None
+    proxy_ms: Optional[float] = None
+    # Output length, because a model that writes longer answers takes longer.
+    # Comparing latency across models without this compares VERBOSITY, not
+    # speed - tokens_per_sec is the figure that survives that.
+    new_tokens: Optional[int] = None
+    prompt_tokens: Optional[int] = None
+
+    @property
+    def tokens_per_sec(self) -> Optional[float]:
+        if not self.new_tokens or not self.server_ms:
+            return None
+        return self.new_tokens / (self.server_ms / 1000.0)
     # Open-loop scenarios only: how late this request STARTED against its
     # scheduled arrival time. A rising value means the load generator itself is
     # falling behind, which invalidates the arrival rate it claims to be
@@ -80,6 +99,7 @@ class Sample:
     def to_row(self) -> dict:
         row = asdict(self)
         row["transport_ms"] = self.transport_ms
+        row["tokens_per_sec"] = self.tokens_per_sec
         return row
 
 
@@ -197,6 +217,29 @@ class ScenarioResult:
         return LatencyStats.from_values(
             [s.transport_ms for s in self.samples if s.outcome in TIMED_OUTCOMES])
 
+    def queue_wait(self) -> LatencyStats:
+        """Time spent waiting for a concurrency slot, as the proxy reports it.
+
+        This is the measurement that separates "the model is slow" from "the
+        model is busy". With max_concurrent=2 on the VLMs, a third caller waits
+        here rather than being refused, so a rising queue wait against a flat
+        server time is the saturation signal - the 503 only arrives once the
+        wait exceeds the server's QUEUE_TIMEOUT_S.
+        """
+        return LatencyStats.from_values(
+            [s.queue_wait_ms for s in self.samples if s.outcome in TIMED_OUTCOMES])
+
+    def output_tokens(self) -> LatencyStats:
+        """Reusing the stats shape for token counts: a model that writes twice
+        as much is not twice as slow, and this is what tells them apart."""
+        return LatencyStats.from_values(
+            [float(s.new_tokens) for s in self.samples
+             if s.outcome in TIMED_OUTCOMES and s.new_tokens])
+
+    def tokens_per_sec(self) -> LatencyStats:
+        return LatencyStats.from_values(
+            [s.tokens_per_sec for s in self.samples if s.outcome in TIMED_OUTCOMES])
+
     @property
     def throughput_rps(self) -> Optional[float]:
         """Answered requests per second of wall time. The number that actually
@@ -241,6 +284,22 @@ class ScenarioResult:
                 f"the load generator fell up to {self.max_schedule_lag_ms:.0f} ms "
                 f"behind its own schedule, so the arrival rate it reports was not "
                 f"the rate actually offered")
+        queue = self.queue_wait()
+        server = self.server_latency()
+        if queue.n and queue.p95_ms and server.p50_ms and queue.p95_ms > server.p50_ms:
+            out.append(
+                f"p95 queue wait ({queue.p95_ms:.0f} ms) exceeds the median time "
+                f"the model itself spent ({server.p50_ms:.0f} ms) - most of the "
+                f"latency here is WAITING FOR A SLOT, not inference. Compare "
+                f"against max_concurrent for this model before reading these "
+                f"numbers as model speed")
+        tokens = self.output_tokens()
+        if tokens.n and tokens.stdev_ms and tokens.mean_ms and \
+                tokens.stdev_ms > tokens.mean_ms * 0.5:
+            out.append(
+                f"output length varies widely ({tokens.mean_ms:.0f} tokens mean, "
+                f"{tokens.stdev_ms:.0f} stdev) - some of this latency spread is "
+                f"the model choosing to write more, not to think longer")
         served = {s.model for s in self.samples if s.model}
         if len(served) > 1:
             out.append(f"more than one model answered during this scenario "
@@ -260,6 +319,9 @@ class ScenarioResult:
             "latency_client_ms": asdict(self.latency()),
             "latency_server_ms": asdict(self.server_latency()),
             "latency_transport_ms": asdict(self.transport_latency()),
+            "queue_wait_ms": asdict(self.queue_wait()),
+            "output_tokens": asdict(self.output_tokens()),
+            "tokens_per_sec": asdict(self.tokens_per_sec()),
             # Present only on mock runs, and named so nobody quotes it.
             "harness_only_timing_NOT_latency": (
                 asdict(self.harness_latency()) if self.counts()[MOCK] else None),

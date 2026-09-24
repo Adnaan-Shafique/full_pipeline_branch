@@ -248,6 +248,7 @@ comes back a clearly labelled `unknown` mock, which is the point.
 | `PLUGINS.md` | **adding or removing a question, domain or class** |
 | `MODES.md` | what the three modes argue, what they cost, mode 3's boxes |
 | `BENCHMARKS.md` | comparing the four VLMs, and load-testing the pipeline |
+| `BENCHMARK_RUNBOOK.md` | the procedure for the real GPU box, model by model |
 | `DECISIONS.md` | why things are the way they are, and what each choice costs |
 | `CHANGELOG.md` | what changed, when |
 | `CLAUDE.md` | orientation for a Claude Code session; has the trap list |
