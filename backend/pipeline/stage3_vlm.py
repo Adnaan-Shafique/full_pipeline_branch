@@ -347,15 +347,42 @@ _REASON_RE = re.compile(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"', re.IGNORECASE)
 _TOKEN_RE = re.compile(r"\b(yes|no|unknown)\b", re.IGNORECASE)
 
 
+# Which tier of parse_vlm_answer() a reply landed in. The pipeline does not
+# care - it just wants an answer - but a BENCHMARK does: a model that only ever
+# parses at TIER_PROSE is one prompt tweak away from producing nothing usable,
+# and that is invisible if you only look at the answers. See backend/bench.
+TIER_EMPTY = "empty"          # the model returned nothing at all
+TIER_JSON = "json"            # clean JSON, fenced or not - the contract honoured
+TIER_KEYS = "keys"            # the right keys inside prose or malformed JSON
+TIER_PROSE = "prose"          # a bare yes/no in the opening sentence
+TIER_GIVE_UP = "give_up"      # nothing recognisable; answer defaulted to unknown
+PARSE_TIERS = (TIER_JSON, TIER_KEYS, TIER_PROSE, TIER_GIVE_UP, TIER_EMPTY)
+
+
 def parse_vlm_answer(text: str) -> tuple[str, str]:
     """Tolerant, in four descending tiers. Returns (answer, reasoning).
 
     The answer is always one of yes / no / unknown, so the UI chip never has to
     handle a surprise value. raw_text is kept separately by the caller.
     """
+    answer, reasoning, _tier = parse_vlm_answer_tiered(text)
+    return answer, reasoning
+
+
+def parse_vlm_answer_tiered(text: str) -> tuple[str, str, str]:
+    """parse_vlm_answer plus WHICH tier produced the answer.
+
+    Split out rather than re-implemented in the benchmark, because two parsers
+    that are supposed to agree eventually will not, and the one the benchmark
+    reports on would stop being the one the pipeline runs.
+
+    The distinction that matters: TIER_GIVE_UP also returns "unknown", so a
+    model that never emits parseable output and a model that honestly answers
+    "unknown" look identical in the results. Only the tier tells them apart.
+    """
     raw = (text or "").strip()
     if not raw:
-        return ANSWER_UNKNOWN, ""
+        return ANSWER_UNKNOWN, "", TIER_EMPTY
 
     # 1. Clean JSON, with or without a markdown fence.
     stripped = _FENCE.sub("", raw).strip()
@@ -365,7 +392,7 @@ def parse_vlm_answer(text: str) -> tuple[str, str]:
             answer = str(data.get("answer", "")).strip().lower()
             reasoning = str(data.get("reasoning", "")).strip()
             if answer in (ANSWER_YES, ANSWER_NO, ANSWER_UNKNOWN):
-                return answer, reasoning or raw
+                return answer, reasoning or raw, TIER_JSON
     except (ValueError, TypeError):
         pass
 
@@ -378,16 +405,16 @@ def parse_vlm_answer(text: str) -> tuple[str, str]:
             reasoning = json.loads(f'"{reasoning}"')   # unescape \n, \" etc.
         except ValueError:
             pass
-        return m.group(1).lower(), reasoning.strip() or raw
+        return m.group(1).lower(), reasoning.strip() or raw, TIER_KEYS
 
     # 3. A bare yes/no in the opening sentence.
     first = re.split(r"(?<=[.!?])\s", raw, maxsplit=1)[0]
     m = _TOKEN_RE.search(first)
     if m:
-        return m.group(1).lower(), raw
+        return m.group(1).lower(), raw, TIER_PROSE
 
     # 4. Give up honestly rather than guessing.
-    return ANSWER_UNKNOWN, raw
+    return ANSWER_UNKNOWN, raw, TIER_GIVE_UP
 
 
 # ─────────────────────────────── Mock ────────────────────────────────────────

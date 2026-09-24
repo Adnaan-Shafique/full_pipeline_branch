@@ -8,6 +8,11 @@ demo_venv/
 # Per-run outputs
 demo_runs/
 batch_runs/
+# Benchmark output: measurements of one machine on one afternoon, not source.
+# report.md and comparison.csv are derived from the json files beside them, so
+# committing any of it would pin a number that stops being true the moment the
+# GPU is busy with something else.
+bench_runs/
 
 # Model weights: u2netp.onnx is deliberately committed (see models/README.md) so
 # the demo never depends on a first-run download. Everything else stays out.

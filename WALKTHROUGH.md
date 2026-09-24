@@ -196,6 +196,7 @@ Pick the temperature question, because it touches every stage including OCR.
 | change what a stage *returns* | `schemas.py` first, then every reader of it |
 | change what the screen *shows* | `frontend/demo_dash_pipeline.py` |
 | change how the model is reached | `stage3_vlm.py`'s `ENDPOINTS` — nothing else |
+| measure latency, or compare VLMs | `backend/bench/` — see `BENCHMARKS.md` |
 | change a threshold or a path | `config.py`, or a `FIELDOPS_*` env var |
 | understand why something is odd | `DECISIONS.md` |
 
@@ -246,6 +247,7 @@ comes back a clearly labelled `unknown` mock, which is the point.
 | `README.md` | the front door — what this is, the four ports, quick start |
 | `PLUGINS.md` | **adding or removing a question, domain or class** |
 | `MODES.md` | what the three modes argue, what they cost, mode 3's boxes |
+| `BENCHMARKS.md` | comparing the four VLMs, and load-testing the pipeline |
 | `DECISIONS.md` | why things are the way they are, and what each choice costs |
 | `CHANGELOG.md` | what changed, when |
 | `CLAUDE.md` | orientation for a Claude Code session; has the trap list |

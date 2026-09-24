@@ -30,7 +30,7 @@ No build step, no linter, no pytest. Suites are standalone scripts that print
 `N passed, M failed` and exit non-zero on failure.
 
 ```bash
-# Every suite (816 assertions across thirteen files)
+# Every suite (933 assertions across fourteen files)
 for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
 
 # One suite, with its output
@@ -51,6 +51,11 @@ python tools/smoke_ocr.py <photos> --question temp_within_limit
 python tools/smoke_ocr.py --list x          # which questions use OCR, and their rules
 python tools/inspect_ckpt.py models/best_ckpt.pth
 
+# Benchmarking - one model per run, because the server holds one at a time
+python tools/run_bench.py --model qwen3-vl --photos <folder> --run-id 20260924
+python tools/run_bench.py --model qwen3-vl --photos <folder> --mock   # no GPU needed
+python tools/bench_report.py bench_runs/20260924
+
 # The UIs (each on its own port, all runnable at once)
 python frontend/demo_dash.py           # 7870 — FROZEN, annotation sidecars
 python frontend/demo_dash_yolox.py     # 7871 — trained detector
@@ -67,9 +72,9 @@ Tests stub `cv2`, `dash` and `requests`. Measured on three interpreters:
 
 | Interpreter | Assertions | Suites failing |
 |---|---|---|
-| everything installed | **822** | 0 |
-| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **816** | 0 |
-| bare — nothing installed at all, `requests` and `pyyaml` included | **645** | 2, both pre-existing |
+| everything installed | **939** | 0 |
+| no `cv2`, `dash`, `torch`, `rembg`, `pandas`, `rapidocr`, `onnxruntime` | **933** | 0 |
+| bare — nothing installed at all, `requests` and `pyyaml` included | **755** | 2, both pre-existing |
 
 Keep that middle row at zero — a suite that needs torch cannot run where it is
 most needed.
@@ -177,6 +182,17 @@ questions whose YAML sets `ocr.enabled` — four today — and **never in mode 3
 where the model reads the text itself. That asymmetry is the comparison
 `demo_dash_pipeline.py` exists to show, so do not "fix" it by feeding mode 3
 the OCR output.
+
+### Benchmarking
+
+`backend/bench/` and `BENCHMARKS.md`. Built around the constraint that the GPU
+**holds one model at a time**, so a four-model comparison is four runs with a
+manual switch between them: one file per model, merged by `bench_report.py`.
+
+Most of that package is about refusing to produce a misleading number — failed
+requests never enter a latency distribution, a 503 is its own outcome, mocks are
+excluded from the ranking, and percentiles below 100 samples carry a caveat.
+`tests/test_bench.py` is mostly assertions that it refuses.
 
 ### Mode 3's claimed boxes (grounding)
 
@@ -315,6 +331,15 @@ callback definitions predate a signature change posts too few arguments and
 dash raises `IndexError: list index out of range` in `_prepare_grouping`. After
 changing any callback's Inputs/States, **hard-refresh the tab** (Ctrl-Shift-R).
 Both symptoms clear on one refresh; neither means the app is broken.
+
+**A benchmark's failure mode is a confident wrong number, not a crash.** The
+two that would void a whole afternoon: counting a 4 ms connection refusal as a
+4 ms response, which makes a saturated server look quick — so only successful
+requests enter a latency distribution; and benchmarking a model the server is
+not actually serving, which on a one-model-at-a-time box is what a forgotten
+switch produces. `harness.verify_model()` checks the registry lists it and
+`confirm_served_model()` checks the reply is attributed to it, before any
+measurement. Both abort rather than write a plausible file.
 
 **Never let a mock assert.** Mock and parse-failure paths return `unknown`
 (and `poor` for quality), always labelled. Asserting yes/no when no model

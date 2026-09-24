@@ -133,14 +133,21 @@ def run_all_modes(image_paths, question_id: str, cfg,
 
         # ── Shared: one quality pass, one detection pass ─────────────────────
         report(index, f"quality {index}/{total}")
+        _t0 = time.perf_counter()
         quality = score_image(
             image_bgr, config=quality_config, model_name=cfg.segmentation_model,
             margin_trim=cfg.margin_trim, min_area_frac=cfg.min_area_frac,
             max_area_frac=cfg.max_area_frac, ignore_resolution=cfg.ignore_resolution)
+        # Timed around the SCORING only, not the annotation write: the benchmark
+        # is asking what the stage costs, and a JPEG write is an artefact of
+        # showing it on screen rather than of judging the photograph.
+        quality.elapsed_ms = (time.perf_counter() - _t0) * 1000
         annotate_for_gallery(image_bgr, quality, run_dir / "quality" / f"{stem}.jpg")
 
         report(index, f"detection {index}/{total}")
+        _t0 = time.perf_counter()
         detection = detector.detect(image_bgr, stem, image_path=path)
+        detection.elapsed_ms = (time.perf_counter() - _t0) * 1000
         if detection.detections:
             render_detection(image_bgr, detection, run_dir / "detection" / f"{stem}.jpg")
 

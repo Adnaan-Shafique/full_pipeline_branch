@@ -66,6 +66,11 @@ class QualityStageResult:
     #               no 0-100 score in that case, so `score` stays 0.0 and the
     #               headline must not pretend otherwise.
     assessed_by: str = "classical"
+    # Wall-clock cost of this stage, for the benchmark's per-photograph
+    # breakdown. Informational only - nothing gates on it, and 0.0 means "not
+    # measured" rather than "instant", which is why the benchmark reports it as
+    # absent instead of as zero.
+    elapsed_ms: float = 0.0
 
     @property
     def verdict(self) -> str:
@@ -165,6 +170,7 @@ class DetectionStageResult:
     # and start treating them as detector output.
     claimed_boxes: list = field(default_factory=list)
     grounding_note: str = ""
+    elapsed_ms: float = 0.0   # see QualityStageResult.elapsed_ms
     # {overlay variant: path} for mode 3 - "box_label", "box", "off". Written
     # once during the run so the UI can switch overlays without re-running
     # anything. Absent keys simply mean that rendering was not produced (no
@@ -334,6 +340,7 @@ class PipelineRecord:
             "quality_score": round(q.score, 1),
             "quality_threshold": q.threshold,
             "quality_fail_kind": q.fail_kind or "",
+            "quality_elapsed_ms": round(q.elapsed_ms, 1) if q.elapsed_ms else None,
             "resolution_ok": q.resolution_ok,
             "width": q.width,
             "height": q.height,
@@ -345,6 +352,7 @@ class PipelineRecord:
             "detection_source": (d.model_name if d else ""),
             "detections": "; ".join(f"{x.label}:{x.confidence:.2f}" for x in d.detections) if d else "",
             "detection_note": (d.note if d else ""),
+            "detection_elapsed_ms": (round(d.elapsed_ms, 1) if d and d.elapsed_ms else None),
             "ocr_engine": (o.engine if o and o.ran else ""),
             "ocr_scope": (o.scope_used if o else ""),
             "ocr_text": (o.text if o else ""),
@@ -383,10 +391,11 @@ class PipelineRecord:
 FLAT_ROW_COLUMNS = [
     "filename", "stem", "question",
     "quality_verdict", "quality_score", "quality_threshold", "quality_fail_kind",
+    "quality_elapsed_ms",
     "resolution_ok", "width", "height",
     "whole_frame_score", "foreground_score", "segmentation_used",
     "failure_reasons", "retake_instructions",
-    "detection_source", "detections", "detection_note",
+    "detection_source", "detections", "detection_note", "detection_elapsed_ms",
     "ocr_engine", "ocr_scope", "ocr_text", "ocr_confidence", "ocr_lines",
     "ocr_elapsed_ms", "ocr_numeric_value", "ocr_numeric_passes", "ocr_error",
     "vlm_boxes", "vlm_box_convention", "vlm_box_best_iou",

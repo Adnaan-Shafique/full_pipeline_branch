@@ -11,6 +11,54 @@ Reasoning lives in `DECISIONS.md`; this file is the record of *what* and
 
 ---
 
+## v1.0 — Benchmarking · 2026-09-24
+
+| Change |
+|---|
+| `backend/bench/` + `tools/run_bench.py` + `tools/bench_report.py` |
+| `BENCHMARKS.md` — the plan, and how to read the results |
+| per-stage timings on the quality and detection results |
+| `parse_vlm_answer_tiered()` — which tier of the parser rescued a reply |
+
+Built for comparing qwen3-vl, pixtral-12b, internvl-38b and molmo-72b, and for
+load-testing the pipeline. Shaped throughout by the constraint that **the GPU
+holds one model at a time**: one run per model, one file per model, merged by a
+separate report step, so a half-finished comparison is still readable.
+
+**Three arrival patterns**, since there is no token streaming anywhere —
+`/infer` returns a complete answer. `batch` (sequential), `continuous`
+(open-loop at a fixed rate, the only one that can show a queue forming), and
+`parallel` (closed-loop at K workers), plus a `ramp` that raises concurrency
+until latency or 503s cross a ceiling and then stops.
+
+**Most of the package is about refusing to produce a misleading number.**
+Failed requests never enter a latency distribution — counting a 4 ms connection
+refusal as a 4 ms response makes a saturated server look quick. A 503 is its own
+outcome, because busy and broken are opposite findings. Mock runs are tagged and
+excluded from the ranking. Percentiles are nearest-rank and carry a caveat below
+100 samples. Models run under different questions, settings or photograph sets
+are flagged rather than tabulated silently.
+
+**The guard that matters most:** on a one-model-at-a-time server, forgetting to
+switch produces a complete, plausible, entirely wrong file. Every run checks the
+registry lists the model AND that the warm-up reply is attributed to it, and
+aborts otherwise. Cold model load — tens of seconds for a 72B — is measured
+deliberately and excluded from every latency figure.
+
+**Contract compliance is reported before speed.** `parse_vlm_answer` is tolerant
+in four tiers, so a model that never emits valid JSON still produces answers and
+looks fine; it is one prompt edit from producing nothing. The parser now reports
+which tier rescued each reply, so that is visible.
+
+Verified against four synthetic models with deliberately different characters
+driven through the real scenario machinery: the fast compliant one, one rescued
+by parser tolerance, one that saturates at concurrency 4, and one that 503s ten
+of twelve parallel requests. Every figure matched the profile it was given.
+
+**933 assertions, fourteen suites** (939 with every dependency, 755 bare).
+
+---
+
 ## v0.9 — Overlay control, and a frontend/backend split · 2026-09-23
 
 | Change |

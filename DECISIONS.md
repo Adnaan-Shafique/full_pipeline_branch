@@ -8,6 +8,73 @@ Newest first. Dates are when the decision was made, not when it was written up.
 
 ---
 
+## 2026-09-24 · A benchmark that refuses more than it reports
+
+**Decision.** The benchmark harness excludes failed requests from latency
+figures, gives 503 its own outcome, tags mock runs out of the ranking, uses
+nearest-rank percentiles with a caveat below 100 samples, and aborts entirely
+when the server is serving a different model than the run claims.
+
+**Why.** A benchmark's failure mode is not crashing. It is producing a
+confident number that is wrong, which nobody catches because it looks like
+every other number. Two examples decided the design. A connection refusal
+returns in 4 ms; counted as a sample, it drags the mean down and makes a
+saturated server look fast — so only requests that actually answered are timed,
+and the failures are counted separately where they read as what they are. And
+on a server that holds one model at a time, forgetting to switch gives you a
+full result file attributed to the wrong model, with nothing in the numbers to
+betray it — so the registry listing AND the reply's own attribution are both
+checked before anything is measured.
+
+**What it costs.** The harness reports fewer numbers than it could, and says
+"not measured" more often than a benchmark usually does. A mock run produces no
+latency at all, only a separately-named harness timing, which makes it useless
+for anything but proving the plumbing works — deliberately.
+
+---
+
+## 2026-09-24 · Contract compliance is reported before speed
+
+**Decision.** The per-model table leads with the share of replies that honoured
+the JSON contract outright, and the share the parser gave up on. Latency comes
+after.
+
+**Why.** `parse_vlm_answer` is tolerant in four descending tiers, and that
+tolerance is a safety net rather than a licence. A model that never emits valid
+JSON still produces answers through tiers 2 and 3 and looks completely healthy
+in the results — while being one prompt edit away from producing nothing at
+all. Worse, replies the parser gives up on arrive as "unknown", which is
+indistinguishable from a model honestly declining to guess. Only the tier tells
+them apart, so the parser now reports it.
+
+**What it costs.** `parse_vlm_answer_tiered()` is a second public entry point
+on a function that had one. It was split rather than re-implemented in the
+benchmark, because two parsers meant to agree eventually will not, and the one
+being reported on would stop being the one the pipeline runs.
+
+---
+
+## 2026-09-24 · Open-loop as well as closed-loop load
+
+**Decision.** `continuous` offers requests on a clock regardless of whether
+previous ones have returned; `parallel` waits for each worker's previous call.
+Both ship.
+
+**Why.** Closed-loop load cannot overload a server. If it slows, the client
+sends less, and the system finds an equilibrium that hides the problem — a
+benchmark built only that way reports a system as healthy right up until it
+collapses. Open-loop keeps offering work, so a queue builds and the measured
+latency includes the waiting, which is what a user actually experiences.
+
+**What it costs.** An open-loop generator can fall behind its own schedule and
+then be describing a load it never produced. Every sample records
+`schedule_lag_ms` and the result warns when it grows. There is also a
+`max_inflight` valve so an overloaded shared GPU does not turn the scenario
+into an unbounded fork bomb; when it engages the scenario says so, because at
+that moment the offered rate stopped being the configured one.
+
+---
+
 ## 2026-09-23 · backend/ and frontend/, with the arrow pointing one way
 
 **Decision.** `app/` becomes `backend/` (pipeline, vendored modules, YOLOX
