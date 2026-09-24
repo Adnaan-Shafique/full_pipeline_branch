@@ -171,6 +171,104 @@ caps must match each model's `limit_mm_per_prompt` — molmo is **1**, the rest 
 
 ---
 
+## Step 2b — the development VM (the benchmark client)
+
+Everything from here runs on the machine you launch the benchmark from, not on
+either server. It needs to reach **the proxy only** — `10.19.71.246:8071`.
+
+### Get the code and a clean interpreter
+
+```bash
+git clone -b claude/vibrant-einstein-4y89hn <this repo> fieldops && cd fieldops
+python3.12 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-demo.txt
+```
+
+`torch` is **not** needed. `--modes` runs with `use_model=False`, which reads
+annotation `.txt` sidecars rather than the trained detector, so the whole
+three-mode pipeline runs without it. `rembg` + `onnxruntime` are needed — they
+are stage 1, and without them every photograph fails the quality gate for the
+wrong reason. `rapidocr` is needed only if you benchmark one of the four OCR
+questions, and its absence is a skip with a line saying so, not a crash.
+
+Check the interpreter before the GPU is involved:
+
+```bash
+python tools/preflight.py --skip-gpu
+for t in tests/test_*.py; do python "$t" >/dev/null || echo "FAILED $t"; done
+```
+
+### Point it at the proxy
+
+Set it once in the shell rather than passing four flags to every command. These
+are read by `pipeline.config`; explicit flags still win over them.
+
+```bash
+export FIELDOPS_VLM_TRANSPORT=proxy
+export FIELDOPS_GPU_URL=http://10.19.71.246:8071
+export FIELDOPS_VLM_API_KEY=secret-bench
+```
+
+**The failure to expect here** is `gpu_url` pointing at the proxy with
+transport still `direct`: `/infer` does not exist on the proxy, so it 404s and
+reads exactly like a dead GPU server. Both variables or neither.
+
+Now the same preflight with the GPU reachable:
+
+```bash
+python tools/preflight.py --transport proxy
+```
+
+It must reach `/v1/health`, list all four VLMs, and report no registry
+warnings. Warnings about `torch`, `ultralytics` and `dash` are expected on a
+benchmark client and cost nothing.
+
+### Photographs, and their annotations
+
+```bash
+python tools/run_bench.py --model qwen3-vl --photos <folder> --mock --modes
+```
+
+A mock run calls no model at all — every sample is tagged `MOCK` and the
+timings appear only under `harness_only_timing_NOT_latency`. It is here to
+prove the plumbing: the photographs decode, the question resolves, the three
+modes run, and the report writes. Do this before spending GPU time.
+
+If mode 1 or 2 reports every photograph stopped at detection, the annotation
+sidecars are missing. The detector looks beside the photographs first and falls
+back to `data/labels/`; **"the detector found nothing" and "nothing was ever
+trained to find this" look identical on a card**, and only one of them is
+evidence.
+
+### Pick ONE question and keep it
+
+```bash
+python tools/smoke_ocr.py --list x      # which questions use OCR, and their rules
+```
+
+All four models must be run with the same `--question`, or `bench_report.py`
+refuses to tabulate them side by side — correctly, since a model answering an
+easier question is not a faster model. `hazard_warning` is the default and the
+safest choice: Site Safety, no OCR, and the two trained classes are the only
+ones a detector box can be scored against.
+
+Choosing one of the four OCR questions (`spd_class_b_installed`,
+`spd_class_c_installed`, `temp_within_limit`, `earthing_value_egb`) makes the
+run more interesting and less clean: modes 1 and 2 get OCR evidence in the
+prompt and mode 3 does not, by design, so the mode-3 column is measuring
+something different from the other two. That asymmetry is the comparison, not a
+bug — but say so wherever the numbers are quoted.
+
+### One live call before the sweep
+
+```bash
+python tools/smoke_stage3.py <folder> --limit 1 --transport proxy
+```
+
+One photograph, one answer, end to end. If this works the benchmark will run;
+if it 404s, 422s or 400s, re-read Step 2 before blaming the GPU.
+---
+
 ## Step 3 — verify the prompt before spending GPU time
 
 **Do not skip this.** A wrong VLM template does not raise. The model answers
@@ -261,18 +359,29 @@ From the client machine:
 python tools/run_bench.py \
     --model internvl \
     --photos <folder> --limit 8 \
-    --transport proxy \
-    --gpu-url http://10.19.71.246:8071 \
-    --api-key secret-bench \
+    --question hazard_warning \
     --timeout 600 \
     --scenario batch,continuous,parallel \
     --modes \
     --run-id 20260924
 ```
 
-`--timeout 600` matters: the proxy's own read timeout is 600 s precisely
-because a cold VLM load exceeds the old 120 s. A shorter client timeout records
-a successful cold load as a failure.
+Transport, URL and key come from the environment exported in Step 2b; pass
+`--transport proxy --gpu-url ... --api-key ...` instead if you would rather be
+explicit. Keep `--question`, `--photos` and `--limit` **identical across all
+four models** — the report checks each one and refuses to tabulate runs that
+differ.
+
+`--timeout 600` matters: the pipeline's own default is **180 s**, and the
+proxy allows 600 precisely because a cold VLM load exceeds the old 120. A
+client timeout shorter than the load records a successful cold load as a
+failure, which is the one number in the report that is *supposed* to be large.
+
+Roughly twenty minutes per model with these settings — batch is
+`--repeats 2` over 8 photographs, continuous is 60 s at 0.5 rps, parallel is 20
+requests at concurrency 4, and `--modes` adds three more passes over the same 8.
+Drop `--scenario continuous` first if the window is tight; it is the only
+open-loop pattern, so it is also the only one that shows a queue forming.
 
 The run aborts if the server is serving a different model than you named. On a
 one-model-at-a-time box that is the failure that would otherwise hand you a
@@ -310,6 +419,11 @@ in the setup surfaces on a 30-second load rather than a five-minute one:
 ```
 pixtral  →  qwen3-vl  →  internvl  →  molmo
 ```
+
+You can run `bench_report.py` after each one rather than waiting for all four.
+It reports on however many models are done, so a sweep interrupted after two
+still produces something readable — and a comparability warning appearing after
+model two is much cheaper to act on than after model four.
 
 ---
 
@@ -385,6 +499,9 @@ bf16. That flag is correct. Keep it in the write-up.
 
 | Symptom | Cause |
 |---|---|
+| `404` on every call, server looks dead | `FIELDOPS_GPU_URL` points at the proxy while transport is still `direct`. `/infer` exists only on the GPU server — Step 2b |
+| every photograph stops at detection in modes 1 and 2 | no annotation sidecars beside the photographs or in `data/labels/` — Step 2b |
+| the report refuses to tabulate two models | they were run with a different question, photograph set, sampling or transport. Keep the flags identical across the sweep |
 | `422 Unknown model 'pixtral'` | the proxy is still v3, or `AVAILABLE_MODELS` is set and narrow — Step 2 |
 | `400 Model 'pixtral' is text-only` | the proxy's image caps have no entry for it, so its cap is 0 — Step 2 |
 | `repetition_penalty` seems to have no effect | the proxy is still v3, which discards undeclared fields silently — Step 2 |
