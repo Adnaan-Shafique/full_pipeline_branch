@@ -100,6 +100,74 @@ sudo firewall-cmd --list-ports
 If the page loads from the VM itself (`curl 127.0.0.1:7872`) but not from a
 laptop, it is the firewall, not the app.
 
+## Sharing the link with more than one person
+
+The units above bind `0.0.0.0`, so once the firewall allows the port the link
+is `http://<host>:7873/` and anyone on the network can open it. Three things
+about that are worth knowing **before** you send it round, because none of them
+announces itself on screen.
+
+### One run at a time, for everybody
+
+`demo_dash_pipeline.py` keeps the last run's results in `_STATE`, a single
+module-level dict (`frontend/demo_dash_pipeline.py:582`). Uploads are per
+browser — they are staged into a run-id folder held in a `dcc.Store` — but the
+**results are not**. Switching tab, mode or overlay does not re-run the
+pipeline, by design; it re-renders from `_STATE`. So:
+
+> Alice runs her photograph. Bob runs his. Alice clicks **Detail** and sees
+> **Bob's** photograph and Bob's answers, under her own question.
+
+Nothing errors, nothing says "this is not yours", and the screen is entirely
+plausible. Treat 7873 as a **single-operator screen**: one person drives while
+the others watch, either over a shared screen or by agreeing who runs next. If
+two people genuinely need to run at once, give them a process each on different
+ports (`DASH_PORT=7874` and a second unit) — that is one copied unit file and
+costs nothing, since the config tree is read-only and `demo_runs/` is keyed by
+run id.
+
+This is the same constraint SERVICE.md's gunicorn note refers to, but it is not
+a gunicorn problem: it holds at `--workers 1`, and with the built-in server, and
+with one process on one port. The worker count only decides whether a *single*
+user also sees blanks at random.
+
+### The proxy API key is readable by anyone who opens the page
+
+The key field is `type="password"`, which masks it on screen and does nothing
+else. Dash serialises the layout — including that input's value — into
+`/_dash-layout`, so anyone who can load the page can read the key out of
+devtools or `curl`. It is not a secret from your viewers.
+
+On a closed network with colleagues that is usually fine, and it is the trade
+this demo already makes. Do not put the link anywhere wider on the assumption
+the field is masked. If the key must not travel, start the process with
+`FIELDOPS_VLM_API_KEY` unset and have the operator paste it at run time — it is
+then in that one browser rather than in every page load.
+
+### Mode 3's prompts are global and they persist
+
+Editing a mode-3 system prompt through the UI writes `config/prompts.yaml` and
+takes effect immediately **for everyone using that process**, and survives a
+restart. There is one copy per machine, not per viewer. A teammate
+experimenting with the answer leg changes what the next person's run does, with
+nothing on their screen saying the prompt is not the default. Before a demo,
+check what is in it:
+
+```bash
+cat config/prompts.yaml        # absent means every leg is on its built-in default
+```
+
+### Anyone who has the link can run the pipeline
+
+There is no login. A viewer can upload photographs, spend GPU time, and fill
+`demo_runs/` — which nothing prunes, and which grows by annotated copies of
+every photograph across three modes. That is appropriate for a known audience
+on a closed network and not for a link that might get forwarded. If you need
+even a weak fence, put it in front rather than in the app: an nginx reverse
+proxy with basic auth on 443, forwarding to `127.0.0.1:7873`, and bind the app
+to `127.0.0.1` by setting `DASH_HOST=127.0.0.1` in the unit so the port is not
+reachable directly.
+
 ## Updating
 
 ```bash
@@ -152,3 +220,7 @@ ExecStart=.../venv_yolox/bin/gunicorn --chdir app --workers 1 --threads 4 \
 Keep `--workers 1`. Results are held in a module-level dict, so a second worker
 would answer half the requests from an empty set and the mode switcher would
 show blanks at random.
+
+That dict is also why one process serves one operator, not a team — see
+"Sharing the link with more than one person" above. `--workers 1` fixes the
+blanks; it does not make two people's runs independent, and nothing here does.
