@@ -1,8 +1,14 @@
 # Per-photograph field-ops demo UI (frontend/demo_dash_pipeline.py), port 7873.
 #
-# Install per SERVICE.md. Every path below assumes the field-ops VM layout:
-#   /data/adnaan/field_ops/integrated_pipeline
-# Change ROOT, User and Group to match `pwd` and `id` on your host.
+# REFERENCE COPY. Do not hand-edit and install this - the checkout path appears
+# in five places below, and a unit with one of them wrong fails with a bare
+# 203/EXEC that names none of them. Generate the real unit instead, which takes
+# every path from the checkout it is run in:
+#
+#     ./deploy/make_unit.sh pipeline | sudo tee /etc/systemd/system/<name>.service
+#
+# The paths below are the field-ops VM's own layout, kept so this file reads as
+# a finished example of what the script produces.
 
 [Unit]
 Description=Field Ops demo - domain, question, one photograph, three modes (Dash, port 7873)

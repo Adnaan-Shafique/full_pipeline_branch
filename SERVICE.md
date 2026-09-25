@@ -9,29 +9,114 @@ Templates live in `deploy/`.
 | `fieldops-demo-pipeline.service` | `frontend/demo_dash_pipeline.py` | 7873 | domain → question → one photograph → three modes |
 
 They are independent and can run together — different ports, no shared state
-beyond the read-only `config/` tree and `demo_runs/`. Everything below is
-written for the modes unit on 7872; for 7873 substitute the unit name, the app
-and the port throughout. The pipeline unit also carries a commented
-`FIELDOPS_CONFIG_DIR`, for pointing a host at a second question set without
-touching the checkout.
+beyond the read-only `config/` tree and `demo_runs/`. The pipeline unit also
+carries a commented `FIELDOPS_CONFIG_DIR`, for pointing a host at a second
+question set without touching the checkout.
 
-Everything below assumes the field-ops VM:
-
-| | |
-|---|---|
-| Host | `AIOPS-POC01` (10.19.75.122) |
-| Project | `/data/adnaan/field_ops/integrated_pipeline` |
-| venv | `venv_yolox` (must be the one with `_ctypes` — see SETUP.md) |
-| Route | proxy, via `llm_proxy_v3` on FALCONPRD — see `PROXY.md` |
-
-Confirm the first three before you start; a unit file with a wrong path fails
-with a bare `203/EXEC` that says nothing about which path was wrong:
+**Do not hand-edit the templates in `deploy/`.** Each carries the checkout path
+in five places, and a unit with one of them wrong fails with a bare
+`203/EXEC` — which names no path at all and reads the same whether it was the
+interpreter, the app file or `WorkingDirectory`. `deploy/make_unit.sh` derives
+all five from its own location, checks each exists, and prints the unit:
 
 ```bash
-cd /data/adnaan/field_ops/integrated_pipeline && pwd
-id                       # the User= and Group= to use
-./venv_yolox/bin/python -c "import _ctypes; print('venv OK')"
+cd /path/to/your/checkout            # wherever you actually cloned it
+./deploy/make_unit.sh pipeline       # read it first; it writes nothing itself
 ```
+
+The templates remain as the readable reference for what it generates and why
+each line is there.
+
+The route is proxy, via `llm_proxy_v4` on FALCONPRD — see `PROXY.md`. The one
+thing the script cannot check for you is the virtualenv: SETUP.md records one
+on this VM built against a python with no `_ctypes`, which imports fine and
+then fails deep inside a dependency. The script prefers a venv that passes that
+check and warns loudly when none does.
+
+## What is already running, and stopping the old ones
+
+Before installing anything, find out what is there. A second copy of the same
+app on the same port does not both-start — one wins, the other restarts every
+five seconds forever (`Restart=always`), and `systemctl status` on the one you
+just installed shows it failing while the page loads perfectly from the other
+one. That is a confusing half-hour.
+
+### Find them
+
+```bash
+# Anything named for this demo, running or not, and any leftover unit files
+systemctl list-units   --all 'fieldops*' 'demo*' 'dash*'
+systemctl list-unit-files      'fieldops*' 'demo*' 'dash*'
+ls -l /etc/systemd/system/*.service ~/.config/systemd/user/*.service 2>/dev/null
+
+# A user service is invisible to the commands above - it has its own manager
+systemctl --user list-units --all 'fieldops*' 'demo*'
+```
+
+Units are only half of it. A demo started by hand in a tmux pane months ago is
+still holding its port and answers nothing to systemd:
+
+```bash
+# Who owns the demo ports right now - the authoritative answer
+sudo ss -lptn 'sport = :7870 or sport = :7871 or sport = :7872 or sport = :7873'
+
+# Any python running one of these apps, however it was started
+ps -eo pid,user,etime,cmd | grep -E 'demo_dash|dash' | grep -v grep
+
+# Panes someone left behind
+tmux ls 2>/dev/null; screen -ls 2>/dev/null
+```
+
+`ss` is the one to trust. If a port is held but no unit claims it, it is a
+stray process — which also means nothing will restart it once you stop it, and
+nothing restarted it across the last reboot either.
+
+### Read one before you touch it
+
+```bash
+systemctl cat  fieldops-demo-modes            # the unit as installed, paths and all
+systemctl show fieldops-demo-modes -p ExecStart -p WorkingDirectory -p Environment
+systemctl status fieldops-demo-modes
+journalctl -u fieldops-demo-modes --since -1h --no-pager | tail -40
+```
+
+`systemctl cat` is what tells you whether an old unit points at the previous
+checkout or at this one. An old unit pointing at a directory that still exists
+is the dangerous case: it starts, it serves, and it serves **last month's
+code** — with nothing on screen saying so, since the page looks identical.
+
+### Stop them
+
+Stopping and disabling are different, and only doing the first is why a service
+you "turned off" is back after a reboot:
+
+```bash
+sudo systemctl stop    fieldops-demo-modes     # now
+sudo systemctl disable fieldops-demo-modes     # and at boot
+sudo systemctl status  fieldops-demo-modes     # expect inactive (dead)
+```
+
+Remove it only once you are sure you will not want it back:
+
+```bash
+sudo rm /etc/systemd/system/fieldops-demo-modes.service
+sudo systemctl daemon-reload
+sudo systemctl reset-failed                    # clears the corpse from list-units
+```
+
+For a user service, the same commands with `--user` and no `sudo`. For a stray
+process with no unit, `kill <pid>` — plain, not `-9`: the app catches SIGINT
+(`KillSignal=SIGINT`) and a run mid-batch finishes rather than leaving a
+half-written folder under `demo_runs/`.
+
+### Then confirm the port is actually free
+
+```bash
+sudo ss -lptn 'sport = :7873'                  # expect no output
+```
+
+If something still holds it, the new unit will flap rather than fail cleanly,
+and its journal will say `Address already in use` once every five seconds.
 
 ## 1. The secret, separately
 
@@ -47,27 +132,44 @@ ls -l /etc/fieldops-demo.env          # expect -rw-------
 
 ## 2. The unit
 
+Generate it, read it, then install it. The step that needs root is a `tee` you
+can see the input to:
+
 ```bash
-sudo cp deploy/fieldops-demo-modes.service /etc/systemd/system/
-sudo vi /etc/systemd/system/fieldops-demo-modes.service   # User, Group, paths
+./deploy/make_unit.sh pipeline --user "$(id -un)" --group "$(id -gn)"
+./deploy/make_unit.sh pipeline | sudo tee /etc/systemd/system/fieldops-demo-pipeline.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now fieldops-demo-modes
+sudo systemctl enable --now fieldops-demo-pipeline
 ```
+
+`modes` in place of `pipeline` gives the 7872 unit. A second instance for a
+second operator — see "Sharing the link" below — takes `--port` and its own
+filename:
+
+```bash
+./deploy/make_unit.sh pipeline --port 7874 \
+    | sudo tee /etc/systemd/system/fieldops-demo-pipeline-b.service
+```
+
+Re-run the script and re-install after moving or re-cloning the checkout. That
+is the whole reason it exists: a unit still pointing at last month's directory
+fails with the same silent `203/EXEC`.
 
 ## 3. Check it
 
 ```bash
-systemctl status fieldops-demo-modes
-journalctl -u fieldops-demo-modes -f          # Ctrl-C to stop following
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7872/    # expect 200
+systemctl status fieldops-demo-pipeline
+journalctl -u fieldops-demo-pipeline -f       # Ctrl-C to stop following
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7873/    # expect 200
 ```
 
-Then open `http://10.19.75.122:7872/` (or `:7873/`) and press **Load / check
-model** — **Check host** on 7873, which also reports how many questions loaded
-and whether the OCR models are present. It
-should report the proxy route, not "answers will be MOCK". If it reports MOCK,
-the environment file is not reaching the process — `systemctl show
-fieldops-demo-modes -p Environment` shows what it actually got.
+Then open `http://10.19.75.122:7873/` and press **Check host**, which reports
+how many questions loaded, whether the OCR models are present, and the model
+route. It should say the proxy route, not "answers will be MOCK". If it says
+MOCK, the environment file is not reaching the process — `systemctl show
+fieldops-demo-pipeline -p Environment` shows what it actually got.
+
+On 7872 the equivalent button is **Load / check model**.
 
 ## If you have no root
 
@@ -77,13 +179,16 @@ dies with your SSH session, which is not a service.
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/fieldops-demo-modes.service ~/.config/systemd/user/
-# Remove the User=, Group= and EnvironmentFile= lines; put the variables in
-# ~/.config/fieldops-demo.env (chmod 600) and point EnvironmentFile there.
-sed -i 's|WantedBy=multi-user.target|WantedBy=default.target|' \
-    ~/.config/systemd/user/fieldops-demo-modes.service
+./deploy/make_unit.sh pipeline --env-file "$HOME/.config/fieldops-demo.env" \
+    > ~/.config/systemd/user/fieldops-demo-pipeline.service
+# A user unit has no User=/Group= and wants a different target.
+sed -i -e '/^User=/d' -e '/^Group=/d' \
+       -e 's|WantedBy=multi-user.target|WantedBy=default.target|' \
+    ~/.config/systemd/user/fieldops-demo-pipeline.service
+install -m 600 deploy/fieldops-demo.env.example ~/.config/fieldops-demo.env
+vi ~/.config/fieldops-demo.env         # the real key
 systemctl --user daemon-reload
-systemctl --user enable --now fieldops-demo-modes
+systemctl --user enable --now fieldops-demo-pipeline
 sudo loginctl enable-linger $USER      # needs root ONCE; without it, see above
 ```
 
@@ -171,11 +276,15 @@ reachable directly.
 ## Updating
 
 ```bash
-cd /data/adnaan/field_ops/integrated_pipeline
+cd /path/to/your/checkout
 git pull
 for t in tests/test_*.py; do ./venv_yolox/bin/python "$t" >/dev/null || echo "FAILED $t"; done
-sudo systemctl restart fieldops-demo-modes
+sudo systemctl restart fieldops-demo-pipeline
 ```
+
+A `git pull` into the same directory needs no new unit. **Re-cloning somewhere
+else does** — re-run `deploy/make_unit.sh` and re-install, or the unit keeps
+serving the old checkout with nothing on the page saying which one it is.
 
 Restart is required for a code change: the process imports everything once at
 start. **Hard-reload the browser tab** afterwards (Ctrl-Shift-R) — a cached page
